@@ -131,8 +131,8 @@ $ctx"""
     companion object {
         const val NUDGE = "[app note] You described a change but did not call any tool, so nothing can be confirmed. Call the needed tool(s) now."
         private val CLAIM = Regex("确认卡片|点击确认|点确认|确认后生效|确认后就|已为你准备|已经为你准备|为你准备好|准备好了|请确认|confirmation card|tap confirm|press confirm|once you confirm|ready for (your )?confirmation|確認カード|확인 카드", RegexOption.IGNORE_CASE)
-        /** 回复文字像是在说「改动已准备好 / 请确认」（纯函数，有单测）。 */
-        fun claimsChange(t: String?) = t != null && CLAIM.containsMatchIn(t)
+        /** 回复文字像是在说「改动已准备好 / 请确认」（纯函数，有单测）。以问号结尾的是在反问用户（「是哪门课？」），不算。 */
+        fun claimsChange(t: String?) = t != null && CLAIM.containsMatchIn(t) && !t.trimEnd().endsWith("？") && !t.trimEnd().endsWith("?")
     }
 
     /** 用户点了确认 / 取消（applied = 实际写入成功没有；note = 补充说明，比如撤销时的冲突）。 */

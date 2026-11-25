@@ -79,6 +79,7 @@ class AiAgentTest {
         assertTrue(AiAgent(m2).send("隐藏周末", st, env, "zh").single() is AiAgent.Step.Text)
         assertEquals(2, m2.seen.size)
         assertTrue(AiAgent.claimsChange("已为你准备好，确认后生效")); assertFalse(AiAgent.claimsChange("周一有高等数学"))
+        assertFalse(AiAgent.claimsChange("有两门叫高数的课，请确认是哪一门？"))
     }
 
     @Test fun errorsAndRetry() {
