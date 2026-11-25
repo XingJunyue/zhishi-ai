@@ -1,20 +1,13 @@
 package com.zhishi.timetable
 
-import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.net.Uri
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
-import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
-import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 课表截图识别：全程在本机做，图片不上传。
+ * 课表文字的解析工具（星期、节次、钟点、时间段、课名 / 教室 / 老师 / 周次）。
+ * 知时 AI 版去掉了本机 ML Kit 识别（截图识别改由 AI 看图模型做，见 AiRecognize.kt）；
+ * 这里只剩纯解析函数：教务 / CSV / 选课清单导入还在用 dayOf、rangeOf、timeOf，parse 保留给单测。
+ * 原来的思路：
  * 思路：先找表头「周一…周日 / Mon…Sun / 月…日」定出每一列，再找左边的节次数字定出每一行，
  * 然后把格子里的文字按列归到星期几、按上下位置换算成第几节到第几节。
  * 中文识别器同时认拉丁字母（英法德西）；日文、韩文各用自己的识别器，三个都试，取认出最多的那个。
@@ -22,8 +15,6 @@ import kotlin.math.roundToInt
 object Ocr {
     /** 一行字和它在图上的位置。 */
     class R(val left: Int, val top: Int, val right: Int, val bottom: Int)
-    /** 最近一次认出的原始文字（调试用）。 */
-    @Volatile var last: List<L> = emptyList()
     class L(val t: String, val r: R, val parts: List<L> = emptyList()) {
         val cx get() = (r.left + r.right) / 2f; val cy get() = (r.top + r.bottom) / 2f
         val w get() = r.right - r.left
@@ -109,69 +100,6 @@ object Ocr {
             s.length == 1 -> d.indexOf(s[0]) + 1
             else -> null
         }
-    }
-
-    /** 读图：太小的截图放大一点再认，字越大越准。 */
-    private fun load(c: Context, uri: Uri): Bitmap? = try {
-        val b = c.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
-            ?: if (uri.scheme == "file") BitmapFactory.decodeFile(uri.path) else null
-        if (b == null) null else {
-            val k = when { b.width < 900 -> 2f; b.width < 1300 -> 1.5f; else -> 1f }
-            if (k > 1f) Bitmap.createScaledBitmap(b, (b.width * k).toInt(), (b.height * k).toInt(), true) else b
-        }
-    } catch (x: Exception) { null }
-
-    private fun lines(text: Text): List<L> = text.textBlocks.flatMap { b -> b.lines.mapNotNull { l ->
-        val bb = l.boundingBox ?: return@mapNotNull null
-        val parts = l.elements.mapNotNull { e -> e.boundingBox?.let { L(e.text, R(it.left, it.top, it.right, it.bottom)) } }
-        L(l.text, R(bb.left, bb.top, bb.right, bb.bottom), parts)
-    } }
-
-    /** 识别结果回调：成功给出课的列表（时间按「每节课时间」换算），失败给出原因。 */
-    fun read(c: Context, uri: Uri, done: (List<Slot>?, String?) -> Unit) {
-        val bmp = load(c, uri) ?: run { done(null, tr("图片打不开")); return }
-        val img = InputImage.fromBitmap(bmp, 0)
-        val sec: (Int, Int) -> Pair<Int, Int> = { a, b -> Term.secRange(c, a, b) }
-        // 先用最可能的识别器，认不出再换
-        val order = when (Tr.lang) { "ja" -> listOf("ja", "zh", "ko"); "ko" -> listOf("ko", "zh", "ja"); else -> listOf("zh", "ja", "ko") }
-        var best: List<Slot>? = null; var bestLines: List<L> = emptyList(); var bestFit = false; var err: String? = null
-        val others = ArrayList<List<Slot>>()
-        fun next(i: Int) {
-            if (i >= order.size || ((best?.size ?: 0) >= 3 && bestFit)) {
-                last = bestLines
-                // 对字形的识别器为准，别的识别器多认出的格子补进来
-                best?.let { b0 ->
-                    val have = b0.flatMap { s -> s.days.map { d -> d to s.from } }.toMutableSet()
-                    val add = others.flatten().filter { s -> s.days.none { d -> (d to s.from) in have } }
-                        .distinctBy { s -> s.days.first() to s.from }
-                    if (add.isNotEmpty()) best = (b0 + add).sortedWith(compareBy({ it.days.first() }, { it.from }))
-                }
-                if (best.isNullOrEmpty()) done(null, err ?: tr("没认出课程，换一张更清楚、带星期表头的截图试试")) else done(best, null)
-                return
-            }
-            val client = when (order[i]) {
-                "ja" -> TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-                "ko" -> TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
-                else -> TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
-            }
-            client.process(img).addOnSuccessListener { text ->
-                val ls = lines(text)
-                if (bestLines.isEmpty()) bestLines = ls
-                try {
-                    val r = parse(ls, bmp.height, sec)
-                    // 看字形挑识别器：有假名用日文，有谚文用韩文，否则中文/拉丁
-                    val all = ls.joinToString("") { it.t }
-                    val want = when { Regex("[\\u3040-\\u30FF]|曜|\\d限|講義|号館|号室").containsMatchIn(all) -> "ja"; Regex("[\\uAC00-\\uD7AF]").containsMatchIn(all) -> "ko"; else -> "zh" }
-                    val fit = order[i] == want
-                    val n = r.size; val b = best?.size ?: 0
-                    if (fit && n > 0 && (!bestFit || n > b)) { best?.let { others += it }; best = r; bestLines = ls; bestFit = true }
-                    else if (!bestFit && n > b) { best?.let { others += it }; best = r; bestLines = ls }
-                    else if (n > 0) others += r
-                } catch (x: Exception) { Diag.log("课表识别 ${order[i]}：${x.message}"); if (err == null) err = tr("没找到「周一、周二…」那一行，换一张带星期表头的截图试试") }
-                client.close(); next(i + 1)
-            }.addOnFailureListener { client.close(); if (err == null) err = tr("识别失败：{0}", it.message ?: ""); next(i + 1) }
-        }
-        next(0)
     }
 
     /** 纯计算，方便单元测试：sec 把「第 a 到 b 节」换成分钟。 */

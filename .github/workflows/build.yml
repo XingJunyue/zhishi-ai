@@ -20,9 +20,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v3
         with: { gradle-version: '8.14.3' }
       - name: Signing key
+        env:
+          KS_B64: ${{ secrets.KS_B64 }}
         run: |
-          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in signing/zhishi.p12.enc -out "$RUNNER_TEMP/zhishi.p12" -pass env:KS_PASS
-          echo "KS_FILE=$RUNNER_TEMP/zhishi.p12" >> "$GITHUB_ENV"
+          # 知时 AI 自己的密钥（和知时不同），只在 Actions secret 里
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/zhishi-ai.p12"
+          echo "KS_FILE=$RUNNER_TEMP/zhishi-ai.p12" >> "$GITHUB_ENV"
       - name: Unit tests
         run: gradle :app:testDebugUnitTest $PV --no-daemon
       - name: Build release apk
@@ -33,7 +36,7 @@ jobs:
           if [ -n "$PV" ]; then grep -q "PREVIEW = true" "$bc"; else grep -q "PREVIEW = false" "$bc"; fi
           grep "PREVIEW" "$bc"
           mkdir out
-          cp app/build/outputs/apk/release/app-release.apk out/zhishi-1.${{ github.run_number }}.apk
+          cp app/build/outputs/apk/release/app-release.apk out/zhishi-ai-${{ github.run_number }}.apk
       - name: Build test apks (with x86 libs for the emulator)
         run: |
           gradle :app:assembleDebug :app:assembleRelease :app:assembleQa -PallAbi $PV --no-daemon
@@ -59,10 +62,10 @@ jobs:
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
-      - name: Timetable image for OCR
+      - name: Timetable image for AI recognition
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk python3-pil > /dev/null
-          for v in zh zh_dense en de ja ko; do python3 tools/make_timetable.py out/tt-$v.png $v; done
+          python3 tools/make_ai_timetable.py out/tt-ai.png
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -97,8 +100,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "build-${{ github.run_number }}" "out/zhishi-1.${{ github.run_number }}.apk" \
-            --title "知时 1.${{ github.run_number }}" \
+          gh release create "ai-${{ github.run_number }}" "out/zhishi-ai-${{ github.run_number }}.apk" \
+            --title "知时 AI ai-${{ github.run_number }}" \
             --notes "$(git log -1 --pretty=%s)" --target "${{ github.sha }}"
 
   # 非 main 分支：把安装包发成预发布（preview），方便先装上试；不影响正式发布
@@ -116,6 +119,6 @@ jobs:
         run: |
           b="${GITHUB_REF_NAME//\//-}"; b="${b%-redo}"
           n="${{ github.run_number }}"
-          cp "out/zhishi-1.$n.apk" "zhishi-$b-preview-$n.apk"
-          gh release create "preview-$b-$n" "zhishi-$b-preview-$n.apk" --prerelease --latest=false \
+          cp "out/zhishi-ai-$n.apk" "zhishi-ai-$b-preview-$n.apk"
+          gh release create "preview-$b-$n" "zhishi-ai-$b-preview-$n.apk" --prerelease --latest=false \
             --title "预览：$b #$n" --notes "分支 $GITHUB_REF_NAME 的预览安装包（不是正式版）。$(git log -1 --pretty=%s)" --target "${{ github.sha }}"

@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">知時</string>
-    <string name="w_course4_name">知時 · 時間割 4×2</string>
-    <string name="w_course2_name">知時 · 時間割 2×2</string>
+    <string name="app_name">知時 AI</string>
+    <string name="w_course4_name">知時 AI · 時間割 4×2</string>
+    <string name="w_course2_name">知時 AI · 時間割 2×2</string>
     <string name="w_course">今日の今の授業と次の授業</string>
-    <string name="w_todo4_name">知時 · ToDo 4×2</string>
-    <string name="w_todo2_name">知時 · ToDo 2×2</string>
+    <string name="w_todo4_name">知時 AI · ToDo 4×2</string>
+    <string name="w_todo2_name">知時 AI · ToDo 2×2</string>
     <string name="w_todo">締め切り順のToDoをすべて表示。ウィジェット内でスクロール</string>
 </resources>

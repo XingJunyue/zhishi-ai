@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">Zhishi</string>
-    <string name="w_course4_name">Zhishi · Emploi du temps 4×2</string>
-    <string name="w_course2_name">Zhishi · Emploi du temps 2×2</string>
+    <string name="app_name">Zhishi AI</string>
+    <string name="w_course4_name">Zhishi AI · Emploi du temps 4×2</string>
+    <string name="w_course2_name">Zhishi AI · Emploi du temps 2×2</string>
     <string name="w_course">Le cours actuel et le suivant aujourd\'hui</string>
-    <string name="w_todo4_name">Zhishi · Tâches 4×2</string>
-    <string name="w_todo2_name">Zhishi · Tâches 2×2</string>
+    <string name="w_todo4_name">Zhishi AI · Tâches 4×2</string>
+    <string name="w_todo2_name">Zhishi AI · Tâches 2×2</string>
     <string name="w_todo">Toutes vos tâches par échéance, à faire défiler dans le widget</string>
 </resources>

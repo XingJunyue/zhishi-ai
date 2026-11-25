@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">Zhishi</string>
-    <string name="w_course4_name">Zhishi · Timetable 4×2</string>
-    <string name="w_course2_name">Zhishi · Timetable 2×2</string>
+    <string name="app_name">Zhishi AI</string>
+    <string name="w_course4_name">Zhishi AI · Timetable 4×2</string>
+    <string name="w_course2_name">Zhishi AI · Timetable 2×2</string>
     <string name="w_course">Today\'s current and next class</string>
-    <string name="w_todo4_name">Zhishi · To-do 4×2</string>
-    <string name="w_todo2_name">Zhishi · To-do 2×2</string>
+    <string name="w_todo4_name">Zhishi AI · To-do 4×2</string>
+    <string name="w_todo2_name">Zhishi AI · To-do 2×2</string>
     <string name="w_todo">All open to-dos by due time — scroll inside the widget</string>
 </resources>

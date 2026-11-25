@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import java.io.File
+import kotlinx.coroutines.launch
 
 /**
  * 只在调试版里有：自动化测试用。
@@ -19,7 +20,7 @@ import java.io.File
  *  --ez wrows true   待办小部件的滑动列表：直接跑 TodoRows（RemoteViewsFactory）取每一行、在本进程里 inflate，结果打到 logcat（WROWS ok / FAIL），
  *                    再把待办小部件预览（示例待办 / 当前待办）存成 PNG 到 app 专属目录（wprev-*.png），冒烟测试拉下来看
 
- *  --es ocr 文件名  识别 app 专属目录里的图片，把结果打到 logcat（标签 ZhishiTest）
+ *  AI：--es aifake 地址 / --es airec 文件 / --ez aisheet / --es aisay 文字 / --ez aiconfirm / --ez aiundo（见下面）
  */
 object TestHooks {
     fun run(c: Context, i: Intent?) {
@@ -46,15 +47,51 @@ object TestHooks {
         i.getStringExtra("jwkind")?.let { TimetableTest.webKind = it; TimetableTest.webUrl = i.getStringExtra("jwurl"); TimetableTest.autoImport = i.getBooleanExtra("jwauto", false) }
         // 教务导入页搜索框预填：--es jwq 大连
         i.getStringExtra("jwq")?.let { TimetableTest.query = it; TimetableTest.webKind = null; TimetableTest.webUrl = null }
-        i.getStringExtra("ocr")?.let { name ->
+        // AI（冒烟测试接本机假的 OpenAI 兼容服务器 tools/fake_ai.py）：
+        //  --es aifake http://127.0.0.1:8766  写进「AI 设置」（故意不带 /v1，测地址容错）；--es aivision 模型名（空 = 不单独设）
+        i.getStringExtra("aifake")?.let { b -> Ai.save(c, AiSettings(b, "test-key", "fake-chat", i.getStringExtra("aivision") ?: "fake-vision")); Log.i("ZhishiTest", "AI configured $b") }
+        if (i.getBooleanExtra("aireset", false)) { AiChat.reset(); AiUndo.last.value = null }
+        //  --es airec 文件名  识别 app 专属目录里的截图，结果打到 logcat（AIREC OK / ROW / FAIL）
+        i.getStringExtra("airec")?.let { name ->
             val f = File(c.getExternalFilesDir(null), name)
-            Log.i("ZhishiTest", "OCR start ${f.absolutePath} exists=${f.exists()}")
-            Ocr.read(c, Uri.fromFile(f)) { r, e ->
-                Ocr.last.forEach { Log.i("ZhishiTest", "OCR LINE ${it.t} @${it.r.left},${it.r.top},${it.r.right},${it.r.bottom}") }
-                if (r == null) Log.i("ZhishiTest", "OCR FAIL $e")
-                else { Log.i("ZhishiTest", "OCR OK ${r.size}"); r.forEach { Log.i("ZhishiTest", "OCR ROW ${it.days.first()}|${it.name}|${it.from}|${it.to}") } }
+            Thread {
+                try {
+                    val img = AiImages.load(c, Uri.fromFile(f)) ?: throw IllegalStateException("cannot read $f")
+                    val r = AiVision.recognize(c, listOf(img))
+                    Log.i("ZhishiTest", "AIREC OK ${r.courses.size}")
+                    r.courses.forEach { Log.i("ZhishiTest", "AIREC ROW ${it.day}|${it.name}|${it.start}-${it.end}|${it.weeks.sorted().joinToString(",")}|${it.room}|${it.teacher}") }
+                } catch (x: Throwable) { Log.i("ZhishiTest", "AIREC FAIL ${x.javaClass.simpleName}: ${x.message}") }
+            }.start()
+        }
+        //  --ez aisheet true [--es aitab todo] [--ez aifull true]  打开 AI 面板（截图用）
+        if (i.getBooleanExtra("aisheet", false)) { AiChat.wantFull.value = i.getBooleanExtra("aifull", false); AiChat.show(i.getStringExtra("aitab") ?: "table") }
+        //  --es aisay 文字  打开面板并发出去；完成后打 AISAY DONE + 每张卡片 AISAY CARD
+        i.getStringExtra("aisay")?.let { t ->
+            AiChat.wantFull.value = i.getBooleanExtra("aifull", false); AiChat.show(i.getStringExtra("aitab") ?: "table")
+            kotlinx.coroutines.MainScope().launch {
+                AiChat.say(c, t)
+                for (it in AiChat.items) when (it) {
+                    is ChatItem.Card -> Log.i("ZhishiTest", "AISAY CARD ${it.plan.changes.joinToString(" / ") { ch -> ch.title }} state=${it.st.value}")
+                    is ChatItem.Bot -> Log.i("ZhishiTest", "AISAY BOT ${it.text.take(120)}")
+                    is ChatItem.Error -> Log.i("ZhishiTest", "AISAY ERROR ${it.text.take(200)}")
+                    else -> {}
+                }
+                Log.i("ZhishiTest", "AISAY DONE items=${AiChat.items.size}")
             }
         }
+        //  --ez aiconfirm true  确认最后一张卡片（和点「确认」同一条路径）；--ez aiundo true  撤销；之后打 AISTATE
+        if (i.getBooleanExtra("aiconfirm", false)) {
+            val card = AiChat.items.lastOrNull { it is ChatItem.Card && it.st.value == ChatItem.PENDING } as? ChatItem.Card
+            Log.i("ZhishiTest", "AICONFIRM ${if (card != null && AiChat.confirm(c, card)) "ok" else "none"}")
+            logState(c)
+        }
+        if (i.getBooleanExtra("aiundo", false)) { AiChat.undo(c); Log.i("ZhishiTest", "AIUNDO ${AiChat.toast.value}"); logState(c) }
+        if (i.getBooleanExtra("aistate", false)) logState(c)
+    }
+
+    private fun logState(c: Context) {
+        val s = AiStateIO.read(c)
+        Log.i("ZhishiTest", "AISTATE courses=${s.courses.joinToString(",") { it.name + "@" + it.days.joinToString("") }} todos=${s.todos.joinToString(",") { it.title }} skin=${s.skin}")
     }
 
     private fun widgetRows(c: Context, tag: String) {

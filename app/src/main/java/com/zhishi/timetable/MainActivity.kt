@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
 
 /** 底部四个标签页；widget / about 是从「我的」点进去的二级页。settings 是「我的」的旧名字（测试脚本、教程还在用）。 */
 private val TABS = listOf("table", "todo", "calendar", "me")
-private val SCREENS = TABS + listOf("widget", "about", "settings")
+private val SCREENS = TABS + listOf("widget", "about", "settings", "ai_settings")
 private fun norm(s: String?) = when (s) { "settings" -> "me"; in SCREENS -> s; else -> null }
 
 @Composable
@@ -111,7 +111,7 @@ fun App() {
             Nav.open.value = null
         }
     }
-    val sub = screen == "widget" || screen == "about"
+    val sub = screen == "widget" || screen == "about" || screen == "ai_settings"
     BackHandler(enabled = sub) { screen = "me" }
     BackHandler(enabled = !sub && screen != "table") { screen = "table" }
     if (Updater.enabled()) UpdatePrompt()
@@ -136,15 +136,18 @@ fun App() {
                     "me" -> MeScreen(onOpen = { screen = it })
                     "widget" -> Paged({ screen = "me" }, tr("小部件")) { WidgetScreen() }
                     "about" -> Paged({ screen = "me" }, tr("关于")) { AboutScreen() }
+                    "ai_settings" -> Paged({ screen = "me" }, tr("AI 设置")) { AiSettingsScreen() }
                 }
             }
         }
        }
       }
-        AnimatedVisibility(!sub && Nav.fullScreen.value == 0, Modifier.align(Alignment.BottomCenter),
+        AnimatedVisibility(!sub && Nav.fullScreen.value == 0 && !AiChat.open.value, Modifier.align(Alignment.BottomCenter),
             enter = fadeIn(tween(180)) + slideInVertically { it / 2 }, exit = fadeOut(tween(120)) + slideOutVertically { it / 2 }) {
-            CompositionLocalProvider(LocalGlassPage provides pageSrc) { BottomBar(screen, Modifier) { screen = it } }
+            CompositionLocalProvider(LocalGlassPage provides pageSrc) { BottomBar(screen, Modifier) { if (it == "ai") AiChat.show(screen) else screen = it } }
         }
+        // AI 助手：从导航条的 ✦ 打开的半屏面板；整屏流程（教务导入等）打开时不显示
+        if (Nav.fullScreen.value == 0) AiSheetHost()
     }
 }
 
@@ -161,6 +164,7 @@ private fun BottomBar(cur: String, m: Modifier, go: (String) -> Unit) {
         Triple("todo", tr("待办"), Icons.Filled.CheckCircle to Icons.Outlined.CheckCircle),
         Triple("calendar", tr("日历"), Icons.Filled.DateRange to Icons.Outlined.DateRange),
         Triple("me", tr("我的"), Icons.Filled.AccountCircle to Icons.Outlined.AccountCircle),
+        Triple("ai", tr("AI"), Icons.Filled.Star to Icons.Outlined.Star),
     )
     val page = LocalGlassPage.current
     val lensOn = GlassLens.supported && !GlassLens.broken && page?.layer != null
@@ -205,9 +209,14 @@ private fun BottomBar(cur: String, m: Modifier, go: (String) -> Unit) {
                 Column(Modifier.weight(1f).clip(CircleShape).clickable(interactionSource = sources[i], indication = null) { go(id) }.padding(vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Box {
-                        // 图标的柔和投影：同一个图标在下面错开 1px、用投影色画一遍
-                        Icon(if (on) icons.first else icons.second, null, tint = textShadow.color.copy(alpha = 0.5f), modifier = Modifier.size(24.dp).offset(y = 1.dp))
-                        Icon(if (on) icons.first else icons.second, null, tint = tint, modifier = Modifier.size(24.dp))
+                        // 图标的柔和投影：同一个图标在下面错开 1px、用投影色画一遍；AI 入口画成两颗闪光的星
+                        if (id == "ai") {
+                            SparkleIcon(textShadow.color.copy(alpha = 0.5f), false, Modifier.size(24.dp).offset(y = 1.dp))
+                            SparkleIcon(tint, AiChat.open.value, Modifier.size(24.dp))
+                        } else {
+                            Icon(if (on) icons.first else icons.second, null, tint = textShadow.color.copy(alpha = 0.5f), modifier = Modifier.size(24.dp).offset(y = 1.dp))
+                            Icon(if (on) icons.first else icons.second, null, tint = tint, modifier = Modifier.size(24.dp))
+                        }
                     }
                     Text(label, fontSize = 11.sp, color = tint, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1,
                         style = LocalTextStyle.current.copy(shadow = textShadow), modifier = Modifier.padding(top = 2.dp))

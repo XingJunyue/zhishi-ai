@@ -55,7 +55,7 @@ fun MeScreen(onOpen: (String) -> Unit) {
             AppIcon(56.dp)
             Column(Modifier.padding(start = 14.dp)) {
                 Text(tr("我的"), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = C.Ink)
-                Text(tr("知时") + " · " + tr("版本 {0}", BuildConfig.VERSION_NAME), fontSize = 13.sp, color = C.Soft)
+                Text(tr("知时 AI") + " · " + tr("版本 {0}", BuildConfig.VERSION_NAME), fontSize = 13.sp, color = C.Soft)
             }
         }
 
@@ -76,6 +76,13 @@ fun MeScreen(onOpen: (String) -> Unit) {
             RowLink(tr("导出到文件"), tr("保存为 .json，换手机时导入")) { saveFile.launch("zhishi-timetable.json") }
         }
         msg?.let { Note(it) }
+
+        SectionTitle(tr("AI"), tr("用你自己的 AI 接口：识别课表截图、用说话的方式改课表和待办"))
+        SoftCard(Modifier.fillMaxWidth(), pad = 6.dp) {
+            val ready = remember(Ai.ver.value) { Ai.ready(c) }
+            RowLink(tr("AI 设置"), if (ready) tr("已设置 · {0}", remember(Ai.ver.value) { Ai.settings(c).model }) else tr("还没设置：填接口地址、API Key 和模型")) { onOpen("ai_settings") }
+            RowLink(tr("AI 助手"), tr("也可以点底部导航条的 ✦")) { AiChat.show("me") }
+        }
 
         SectionTitle(tr("小部件"))
         SoftCard(Modifier.fillMaxWidth(), pad = 6.dp) {
@@ -177,7 +184,7 @@ fun WidgetScreen() {
     var tip by remember { mutableStateOf<String?>(null) }
     fun pin(cls: Class<*>) {
         val ok = try { am?.requestPinAppWidget(ComponentName(c, cls), null, null) == true } catch (x: Exception) { false }
-        if (!ok) tip = tr("这个桌面不支持一键添加：长按桌面空白处 → 小部件 → 找到「知时」")
+        if (!ok) tip = tr("这个桌面不支持一键添加：长按桌面空白处 → 小部件 → 找到「知时 AI」")
     }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         Text(tr("上面是正在上的课（课间就是最近的下一节），下面是再下一节；今天没课就是一张白卡。"),

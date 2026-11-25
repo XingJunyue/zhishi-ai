@@ -1,17 +1,27 @@
-# AGENTS.md — 给接手知时的 agent
+# AGENTS.md — 给接手知时 AI 的 agent
 
-知时（Zhishi）是刑君越的安卓课表 App，从作者的另一个应用「留白」（自律 / 应用守护）里把课表相关功能单独拿出来做成的独立应用。Kotlin + Jetpack Compose，包名 / applicationId `com.zhishi.timetable`，可以和留白同时安装。名字取自杜甫「好雨知时节」。动手前先读完这份。
+知时 AI（Zhishi AI）是刑君越的安卓课表 App「知时」（仓库 XingJunyue/zhishi）的 **AI 版**，单独一个仓库 XingJunyue/zhishi-ai，从知时 main（build-43 + a801de1）带着历史分出来。和知时是两个应用：applicationId `com.zhishi.timetable.ai`（代码的 namespace / 包名仍是 `com.zhishi.timetable`，知时是 `com.zhishi.timetable`），应用名「知时 AI」，可以和知时、留白同时安装，数据、SharedPreferences、提醒闹钟、通知、小部件全都分开。知时本身还在用户手机上每天用：**不要动 XingJunyue/zhishi 的 main、release、CI secret 和签名。** Kotlin + Jetpack Compose。名字取自杜甫「好雨知时节」。动手前先读完这份。
 
 ## 范围
-- 只做课表和学习相关：课表格子与编辑、教务导入、日历 / 文件 / 截图导入、学期与节次设置、**待办**、月历视图、课表小部件、皮肤、设置、关于与更新、教程。
+- 只做课表和学习相关：课表格子与编辑、教务导入、日历 / 文件 / AI 截图导入、AI 助手、学期与节次设置、**待办**、月历视图、课表小部件、皮肤、设置、关于与更新、教程。
 - 空状态插画（待办、课表没课）：`InkArt.kt` 的一笔水墨圆相 + 带锋的勾（待办）/ 三道短横（课表）+ 小朱印，墨色跟皮肤，进场一笔笔写出（build-16，用户嫌原来的粉圆 + 新芽丑）。不要换回卡通风。
 - 待办是用户明确要的（2026-11 改版时提出）：标题、备注、截止时间（精确到分钟的时 / 分滚轮，或全天 `allDay`）、快捷时间（`Todos.preset`、「下次上课前」= `Todos.nextClass`）、关联课程（按课名）、完成、提醒（可提前 `before` 分钟，全天从当天 8:00 算；`Todos.alarmAt` 决定闹钟时刻）；分组 已过期 / 今天 / 即将 / 已完成；左右滑删除；存 SharedPreferences `todo` 的 `items`，课表备份 / 导出里带 `todos` 字段（旧备份没有就不动现有待办）。逻辑在 `Todo.kt`（`Todos` 纯函数有单测 `TodoTest`），界面在 `TodoUi.kt`。
 - 置顶 / 自定义顺序（build-43，用户要的「代办可自定义顺序，可置顶（小部件同步）」）：`Todo.pin`（json `pn`）、`Todo.order`（json `or`，0 = 没手动排过；老数据没有这两个字段 = 不置顶、没排过，顺序和以前一样）。`Todos.group` 返回 置顶 `pinned`（没完成的置顶，按默认顺序）→ 已过期 → 今天 → 即将，`open` 是这个总顺序；每组里按 `order` 稳定排序：没排过的（新加的）按默认顺序排在组最前，排过的跟在后面按手动顺序。标题的「已过期 / 今天 / 之后 N 项」用 `lateN/todayN/laterN`（置顶的也按日期算进去）。待办页右上角排序按钮进排序模式（`TodoSortList`）：按住右边把手拖动只在同一组内排（`TodoStore.reorder` 把这组记成 1..n），点图钉置顶 / 取消（`Todos.togglePin` 清零 order）；编辑页也有「置顶」开关。小部件 `todoPlan` 直接用 `group().open`，行上画小图钉（`D.tack`）。
 - 到点提醒：`TodoAlarm` 用 AlarmManager 精确闹钟（Android 13+ 靠 USE_EXACT_ALARM 装上即有；SCHEDULE_EXACT_ALARM 只给 ≤32，小米等默认不给它，之前退成不精确导致收不到）。通知权限 POST_NOTIFICATIONS 只在用户第一次打开某条待办的提醒时申请。`TodoReminder` 发通知；`ZhishiApp.onCreate`（任何进程启动）、打开 App、开机 / 更新后都 `rescheduleAll`，被系统清掉的闹钟补上，错过的（未到截止）补发一次。已提醒过的记在 prefs `todo_fired`（键 `id@提醒时刻`），防止重复提醒。编辑页开提醒时有「1 分钟后发测试通知」（走同一条闹钟路径，`TodoAlarm.TEST_ID`）和跳系统应用设置（自启动 / 后台活动 / 电池）。
 - 不做任何应用守护 / 拦截 / 专注 / 使用时长统计；不要加无障碍、使用情况访问、悬浮窗、设备管理、查询全部应用、通知监听这类权限。（待办提醒用的 POST_NOTIFICATIONS、SCHEDULE_EXACT_ALARM、USE_EXACT_ALARM、RECEIVE_BOOT_COMPLETED 是允许的。）
 
+## AI 版（知时 AI 独有，2026-11-26 起）
+- **用户自带接口（BYO）**：没有后端、没有内置密钥。用户在「我的 → AI 设置」（`AiSettingsScreen.kt`，打开名 `ai_settings`）填 OpenAI 兼容接口：接口地址、API Key、对话模型、可选的看图模型；预设（百炼 / DeepSeek / 方舟 / OpenAI / 自定义）**只填地址**，自定义默认是空的，不内置任何中转站。地址容错（`AiUrl`）：去掉空白、末尾 `/`、`/chat/completions`；路径最后一段是 `v1`/`v3` 这类版本号就原样用，否则先试 `<地址>/v1`，404 / 拿到网页再试原样，试通的记住。模型名自由填，也可以「从接口获取模型列表」（GET `/models`）。「测试连接」测对话模型，再用一张写着 OK 的小图测看图（读不出 OK 就提示「可能看不了图片」——有的文本模型会假装看到）。
+- 密钥用 Android Keystore 的 AES-GCM 加密存在 prefs `ai`（`KeystoreCipher`，`AiSettingsStore`）；密钥库不可用时退回不加密并在界面上说明。只用标准字段：`messages`（文字 + `image_url` data URL）、`tools` / `tool_calls`、`temperature`、`max_tokens`；不用 `response_format`、不用流式（但回复被强制成 SSE 时也能拼回来，`<tool_call>` 写在正文里的也认）。429 / 5xx 等一下重试一次。
+- **接缝（以后换自营托管后端、去掉 BYO 时只改这里）**：上层只认 `AiModels.kt` 的 `AiClient` 接口（`chat(messages, tools)` / `vision(system, prompt, images)` / `test()` / `models()`）和与传输无关的 `AiMessage` / `AiToolCall` / `AiReply` / `AiError`。现在唯一的实现是 `OpenAiCompatClient`（`AiOpenAi.kt`，传输层 `AiHttp` 可替换）。所有调用都从 `Ai.client(context)`（`AiAndroid.kt`）拿客户端：换托管后端 = 新写一个 `AiClient` 实现 + 改 `Ai.client` / `Ai.ready`，再删掉 `AiSettingsScreen.kt`、`AiSettingsStore.kt`、「我的」里的「AI 设置」入口和相关文案。聊天、识别、工具、确认 / 撤销都不用动。
+- **AI 截图识别**（替换了原来的 ML Kit 本机识别，依赖已删）：导入菜单「AI 识别截图」（可多选）或 AI 助手里附图 → `AiImages.load`（最长边 1600 的 JPEG）→ 每张图单独发给看图模型（`AiVision.recognize`，看图模型没填就用对话模型）→ 要求只回 `{"courses":[{name, teacher, room, weekday, start_period, end_period, start_time, end_time, weeks, odd_even}]}` → `AiRecognize.parse` 抠 JSON（容忍 ``` 围栏、前后有话、末尾逗号、数组根、字段别名、只给钟点就近换成节次）、校验（没课名 / 星期不对 / 节次越界的丢掉计数）、去重；不是 JSON 时让对话模型把它整理成 JSON 一次 → 原来的导入预览 `ImportPreview`（覆盖 / 追加）→ `applyImport`。`Ocr.kt` 只剩纯解析函数（教务 / CSV 导入还在用 `dayOf`、`rangeOf`、`timeOf`），不要再加本机 OCR。
+- **AI 助手**：底部导航条第五项 ✦「AI」（`SparkleIcon`，颜色跟皮肤，不是悬浮按钮）打开 `AiSheetHost`：自己画的半屏面板（默认 56% 高，拖头部往上到全屏、往下收起，返回键收起），后面的页面不变暗，确认的改动马上能在后面看到；打开时底部导航条收起；整屏流程（`Nav.fullScreen > 0`）时不显示。空状态的建议按打开时所在的标签页（待办页给待办的建议）。输入框左边附图（走同一条识别路径）。对话逻辑是纯 Kotlin 的 `AiAgent`（`AiAgent.kt`）：每次把当前课表 / 待办 / 设置（带 id）放进系统提示；模型调工具只是**提议**，`AiTools.plan` 在一份快照 `AppState` 上算出新状态和前后对比（`AiChange` / `DiffLine`），界面出确认卡片，用户点「确认」后才由 `AiUndo.apply` → `AiStateIO.write` 写进各自的存储（和手动改走同一套函数，小部件、提醒、皮肤一起更新），最后一批可以撤销（`AiBatch.undo`：应用后又被手动改过的块不动）。**模型永远不直接写数据。** 参数错了把原因回给模型重来（最多 4 轮）；模型嘴上说「准备好了请确认」却没调工具时追问一次（`AiAgent.claimsChange`，真实接口上遇到过）；打开页面（`open_page`）直接执行并收起面板。工具：`add_course` `update_course` `move_course` `delete_course` `set_term` `set_period_times` `add_todo` `update_todo` `complete_todo` `delete_todo` `pin_todo` `set_skin` `set_skin_rotation` `set_widget_appearance` `set_app_settings` `open_page`；问答不调工具，从上下文回答。换语言不做（会重启进程），让它打开「我的」。
+- 出错一律给人话（`aiErrorText`）：没设置 / 密钥不对 / 太频繁或额度用完 / 连不上 / 地址或模型名不对 / 模型看不了图片 / 503 或 upstream_rejected =「模型暂时不可用，稍后重试或换个模型」/ 其他 5xx（带图时提示单独设看图模型）/ 回复读不懂。
+- 隐私文案（关于页、AI 设置页顶部）：数据存在手机上，**只有用 AI 功能时**截图、消息和回答需要的课表 / 待办会发给用户自己填的服务商；不要再写「数据从不离开手机」。
+- 真实接口测试只在沙盒里做（录放：`AiClient` 走 `ReplayHttp`，请求由 App 代码生成，主会话用 curl 发），CI 里没有真密钥：单测把 HTTP 层换成假的，冒烟测试接本机假接口 `tools/fake_ai.py`（`adb reverse tcp:8766`）。
+
 ## 界面结构（2026-11 改版，照用户给的六张皮肤参考图）
-- 底部液态玻璃导航四项：课表 / 待办 / 日历 / 我的（`MainActivity.App`、`BottomBar`）。没有侧栏了。「我的」= 原来的设置页（`MeScreen`，打开名 `settings` 或 `me`），小部件页、关于页从「我的」点进去，左上角返回。
+- 底部液态玻璃导航：课表 / 待办 / 日历 / 我的 + 第五项 ✦ AI（不是页面，点了打开 AI 面板）（`MainActivity.App`、`BottomBar`）。没有侧栏了。「我的」= 原来的设置页（`MeScreen`，打开名 `settings` 或 `me`），小部件页、关于页从「我的」点进去，左上角返回。
 - 课表页顶部：大号粗体「第N周」+「周一 11.21」，右上角「＋」（添加课程和所有导入，底部弹出）和日历图标（学期与显示）。下面一周日期条，今天是柔和的圆角胶囊；左边时间列是每节的上 / 下课时间 + 细虚线时间轴；课块是半透明的柔和色块，没有粗边框和阴影。
 - 字体：全部系统无衬线（`Serif` 现在就是默认字体，名字保留免得到处改）。
 - 液态玻璃（2026-11-22，用户要的 iOS 26 Liquid Glass 风格）：清透、带水光，**不要模糊 / 毛玻璃**。统一用 `Glass.kt` 的 `Modifier.liquidGlass(shape, level, tint, fill, shadow)`：很透的底（浅色白 ~16%、深色 ~10%，按皮肤主色轻染）+ 左上亮右下淡的细亮边 + 顶部柔光 + 底边暗边 + 只画在形状外的轻投影，内容按形状裁剪（调用处不用再 clip）。`level` 0 = 清透（卡片、按钮、课块），`Glass.THICK` = 底部弹出 / 对话框 / 盖在网页上的条（~98.5% 不透明：实测 94% / 97% 时后面列表的深色字仍有看得出的残影）。导航条的底用 `Glass.bar()`（皮肤卡片色，深色 ~90%、浅色 ~80%，没选中的字用 `C.Soft`），输入框底用 `Glass.field()`（~96%）。`GlassSheet` 的遮罩加重（黑 浅色 45% / 深色 58%）。底部弹出一律用 `GlassSheet`，对话框 `containerColor = Transparent, tonalElevation = 0.dp, shape = DialogShape, modifier = dialogGlass()`。字统一带一圈很淡的光晕（`ZhishiTheme` 里的 `LocalTextStyle` shadow，浅色白、深色黑），主色实底按钮上的字去掉光晕。
@@ -20,17 +30,17 @@
 - 课表页的「导入课表」菜单：`Nav.sub` 处理完置 `Nav.NONE`（以前停在 8，每次切回课表页都重新弹）。只有课表空、从没有过课（`ImportPrompt`，SharedPreferences `table` 的 `imported`，`Term.setDesired` 有课就记上）时，每次启动最多自动弹一次。
 - 整屏流程（教务导入等）调用 `HideBottomBar()`：打开期间底部导航条收起，免得盖住页面底部按钮。新加整屏页面也要这样。
 - 每套皮肤有整屏插画背景（浅 / 深各一张，`res/drawable-nodpi/skin_<id>_<light|dark>.webp`，插画在右上、右边和底部，中间留白）和圆形缩略图（`..._thumb.webp`）；`Backdrop` 铺在所有页面下面，卡片用 `C.Glass` 半透明。插画是 AI 生成后压成 WebP 的，要换就整套换，别直接截参考图（参考图里有手机边框和假界面）。
-- 应用图标（build-16，用户要求换成书法字）：书法「知时」竖排 + 右下朱红印章「雨」（好雨知时节）。字形来自 Ma Shan Zheng（马善政楷书，Google Fonts，SIL OFL 1.1，THIRD_PARTY_NOTICES 有署名），用 fontTools 把字形轮廓转成 VectorDrawable 路径，不带字体文件。自适应图标：背景 `drawable/ic_launcher_paper.xml`（宣纸色径向渐变）、前景 `ic_launcher_fg.xml`（墨字 + 印章，都在 66dp 安全区内）、单色层 `ic_mono.xml`（同样的字，印章里「雨」镂空）；mipmap PNG 由同一套矢量渲染。应用内（我的、关于、教程第一页）`AppIcon` 叠画背景 + 前景两层（放大 1.5 倍 = 桌面可见的 72dp）。要改图标就整套重新生成，别只改一层。
+- 应用图标（知时 AI）：在知时的书法图标上改两处——背景换成淡青蓝的纸色（`ic_launcher_paper.xml`，知时是暖黄宣纸色），前景右上角加一个靛蓝的「AI」小牌子（`ic_launcher_fg.xml` 最后两条路径，单色层 `ic_mono.xml` 只加「AI」两个字母），mipmap PNG 由同一套矢量重新渲染。以下是继承的说明：应用图标（build-16，用户要求换成书法字）：书法「知时」竖排 + 右下朱红印章「雨」（好雨知时节）。字形来自 Ma Shan Zheng（马善政楷书，Google Fonts，SIL OFL 1.1，THIRD_PARTY_NOTICES 有署名），用 fontTools 把字形轮廓转成 VectorDrawable 路径，不带字体文件。自适应图标：背景 `drawable/ic_launcher_paper.xml`（宣纸色径向渐变）、前景 `ic_launcher_fg.xml`（墨字 + 印章，都在 66dp 安全区内）、单色层 `ic_mono.xml`（同样的字，印章里「雨」镂空）；mipmap PNG 由同一套矢量渲染。应用内（我的、关于、教程第一页）`AppIcon` 叠画背景 + 前景两层（放大 1.5 倍 = 桌面可见的 72dp）。要改图标就整套重新生成，别只改一层。
 - 课程等级（重要 / 普通 / 水课）只是显示用的标签：课块、小部件上标出来，`Term.showLevel` / `Term.widgetLevel` 分别开关，不附带任何限制。
 
 ## 发布流程
-- `main` = 正式版。推到 main 会触发 `.github/workflows/build.yml`：单元测试 → 构建 → 模拟器冒烟测试（`tools/smoke.sh` 截图，打包发到 `ci-shots` 预发布，也作为 artifact `shots` 上传）→ 发布 release `build-N`（资产 `zhishi-1.N.apk`），应用内更新器会推给用户。
+- `main` = 正式版。推到 main 会触发 `.github/workflows/build.yml`：单元测试 → 构建 → 模拟器冒烟测试（`tools/smoke.sh` 截图，打包发到 `ci-shots` 预发布，也作为 artifact `shots` 上传）→ 发布 release `ai-N`（资产 `zhishi-ai-N.apk`，versionName `ai-N`，versionCode = run number），应用内更新器会推给用户。
 - 新功能一律开分支，用 workflow_dispatch 跑 CI，`preview` job 发 prerelease 预览包（tag `preview-<分支名去掉 -redo>-<run_number>`）给用户试。
 - **只有用户明确说"上线 / 直接上 / 测试通过"才合入 main。** 不要自行合并。
 - 预览包关闭应用内更新：非 main 分支给 gradle 传 `-Ppreview`（env `PV`），`BuildConfig.PREVIEW=true`；`Updater.enabled()` = `!PREVIEW`。构建后 grep `BuildConfig.java` 核对，单测 `TourAndUpdaterTest` 也测。
-- 更新器读 `Updater.REPO = "XingJunyue/zhishi"` 的 releases（tag `build-N`、资产 `zhishi-1.N.apk`），直连失败走镜像。仓库是私有的时候拿不到（界面会提示「仓库还没公开」）。
+- 更新器读 `Updater.REPO = "XingJunyue/zhishi-ai"` 的 releases（tag `ai-N`、资产 `zhishi-ai-N.apk`），直连失败走镜像；关于页、更新弹窗、下载链接都只指向 zhishi-ai，绝不指向知时的 build-N。
 - 只文档改动推 main 时提交信息加 `[skip ci]`，避免多发一个版本。
-- 签名：密钥不在仓库里。CI 用 Actions secret `KS_PASS` 解密 `signing/zhishi.p12.enc`（openssl aes-256-cbc pbkdf2 20万次）还原，别名 `zhishi`；本地构建设 env `KS_FILE`/`KS_PASS`。仓库是公开的，绝不能把 p12 或密码提交进来。换密钥会导致老用户无法覆盖安装。
+- 签名：知时 AI 用**自己的**密钥（和知时不同，因为包名不同，两边互不能覆盖安装）。仓库里没有任何密钥文件：CI 从 Actions secret `KS_B64`（PKCS12 的 base64）还原、`KS_PASS` 是密码，别名 `zhishi-ai`；原件只在沙盒 `/workspace/secrets/zhishi-ai/`（chmod 600，不在任何 git 目录里）。本地构建设 env `KS_FILE`/`KS_PASS`。仓库是公开的，绝不能把 p12 或密码提交进来；换密钥会导致已装用户无法覆盖安装。
 
 ## 每个版本都要有应用内教程
 - 首次安装：可跳过的完整引导（`Tour.FIRST`）。
@@ -42,7 +52,7 @@
 ## 多语言
 - 界面文字用中文原文当键（`tr("…")`），六种语言在 `app/src/main/assets/i18n/{en,fr,ja,ko,de,es}.json`。
 - `TourAndUpdaterTest.allStringsTranslated` 会扫源码里所有 `tr("…")` 文案、教程、皮肤名，六种语言缺一条就失败。新文案必须同时补六种翻译。
-- 应用名在 `res/values*/strings.xml`：知时 / Zhishi（日语 知時）。
+- 应用名在 `res/values*/strings.xml`：知时 AI / Zhishi AI（日语 知時 AI）；小部件选择器里的名字也带「AI」，和知时的分得开。
 
 ## 皮肤
 - `Theme.kt`：`Skins.ALL` 六套（春雨 chunyu 默认、宣纸 xuanzhi、青瓷 qingci、暮山 mushan、夜航 yehang、樱 ying），每套 `light` / `dark` 两份 `Pal`，加插画背景 / 缩略图（`Skin.art` / `Skin.thumb`）。`poem` 是用户定的一句话简介：春雨「清新如春，细雨润心」、宣纸「书卷墨香，文心相伴」、青瓷「古韵流光，淡雅宁静」、暮山「暮色山河，静谧沉稳」、夜航「星海航行，向梦而行」、樱「樱花烂漫，与你相遇」。模式：跟随系统 / 浅色 / 深色。存储在 SharedPreferences `look`（`skin`、`mode`）。
@@ -84,7 +94,7 @@
 - `qa` 构建类型：`initWith(release)`——和正式版一样 R8 混淆 / 资源压缩，但用调试签名、带测试钩子（源码用 `src/debug`）。`build.yml` 每次都打 `out/test-qa.apk`，冒烟测试最后跑 `QUICK=1 tools/crashhunt.sh`（今天的课上完 / 正好下课 / 老数据 / 空，冷启动两次 + 两个导入入口）。混淆相关的崩溃只有在 qa / release 上才看得到。
 - `tools/crashhunt.sh` 完整版（8 种时刻 + 8 种导入方式 + 强制更新弹窗）用 `.github/workflows/crashhunt.yml`，**只手动触发**（workflow_dispatch），产物 artifact `hunt`（`crashhunt-<标签>.txt` 里是 FATAL EXCEPTION 堆栈）。模拟器是英文系统，脚本先 `--es setlang zh`（会让进程自己退出重启，单独一步）。`--es seedat after|before|between|ending|offday|tiny` 按「现在」造课表，`--ez oldformat true` 写坏的老格式数据，`--ei fakeneed N` 假装查到新版。所有 workflow job 都有 `timeout-minutes`。
 - `--ez notodos true` 清空待办（截空状态）；`--es wtint wall|skin`、`--ei wclear N` 小部件玻璃颜色 / 透明度；`--es wallpaper dark|light` 换模拟器壁纸（调试版 manifest 才有 SET_WALLPAPER）。
-- `--ez seed true` 放示例课程（含一节「正在上」的课）和几条示例待办；`--es setlang zh|en|…` 换语言；`--es skin <id> --ei mode 0|1|2` 换皮肤；`--es open table:N|todo:N|calendar|settings:N|me|widget|about` 打开页面（`todo:1` 新建待办、`todo:2` 编辑第一条）（`table:1` 教务导入、`table:2` 学期、`table:3` 加课、`table:4` 改课、`table:5` 开学日期、`table:7` 每节时间、`table:8` 导入菜单）；`--es jwkind/jwurl --ez jwauto` 网页导入；`--es jwq` 预填学校搜索；`--es ocr <文件>` 识别截图。
+- `--ez seed true` 放示例课程（含一节「正在上」的课）和几条示例待办；`--es setlang zh|en|…` 换语言；`--es skin <id> --ei mode 0|1|2` 换皮肤；`--es open table:N|todo:N|calendar|settings:N|me|widget|about` 打开页面（`todo:1` 新建待办、`todo:2` 编辑第一条）（`table:1` 教务导入、`table:2` 学期、`table:3` 加课、`table:4` 改课、`table:5` 开学日期、`table:7` 每节时间、`table:8` 导入菜单）；`--es jwkind/jwurl --ez jwauto` 网页导入；`--es jwq` 预填学校搜索。AI：`--es aifake <地址>` 写入假接口设置（冒烟用 `http://127.0.0.1:8766`，故意不带 /v1）；`--es airec <文件>` 识别截图（logcat `AIREC OK/ROW/FAIL`）；`--ez aisheet true [--es aitab todo] [--ez aifull true]` 打开 AI 面板；`--es aisay <文字>` 发一句（`AISAY CARD/BOT/ERROR/DONE`）；`--ez aiconfirm true` 确认最后一张卡片；`--ez aiundo true` 撤销；`--ez aistate true` 打 `AISTATE`；`--ez aireset true` 清空对话。启动 Activity 要写全名：`adb shell am start -n com.zhishi.timetable.ai/com.zhishi.timetable.MainActivity`（包名和 namespace 不同，`.MainActivity` 会找错）。
 
 ## 工作习惯
 - **Compose：不要在 Row / Column / Box 等 inline 布局的内容 lambda 里用 `return@Row` 这类带标签的 return 提前返回。** 现在是 Kotlin 1.9.22 + Compose 编译器 1.5.8 + 运行时 1.7（BOM 2024.09.03），这种写法会让组栈错位，首帧组合 `ArrayIndexOutOfBoundsException`（`IntStack.peek2` / `ComposerImpl.endRoot`）。build-15/16 「今天的课上完后」打开 App / 点小部件 / 导入课表后回课表页一直闪退就是 `NowStrip` 里的一句 `return@Row`（build-17 修）。用 if / else 或拆成小 composable；`RobustnessTest.noEarlyReturnFromInlineLayouts` 会扫源码。

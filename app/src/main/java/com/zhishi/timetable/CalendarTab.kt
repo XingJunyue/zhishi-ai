@@ -36,10 +36,10 @@ import java.time.YearMonth
 @Composable
 fun CalendarScreen(onOpenTodo: (Todo) -> Unit = {}) {
     val c = LocalContext.current
-    val courses = remember { Term.desired(c).filter { it.kind == "course" } }
+    val courses = remember(AiData.ver.value) { Term.desired(c).filter { it.kind == "course" } }
     val pal = remember(courses) { coursePalette(courses) }
-    val term = remember { Term.termStart(c) }
-    val total = remember { Term.totalWeeks(c) }
+    val term = remember(AiData.ver.value) { Term.termStart(c) }
+    val total = remember(AiData.ver.value) { Term.totalWeeks(c) }
     val tv = TodoStore.ver.value
     val todos = remember(tv) { TodoStore.all(c) }
     val today = Term.todayEpoch()

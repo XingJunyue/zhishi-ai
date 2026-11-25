@@ -31,7 +31,7 @@ import java.net.URL
 data class Release(val code: Int, val name: String, val notes: String, val url: String)
 
 object Updater {
-    const val REPO = "XingJunyue/zhishi"
+    const val REPO = "XingJunyue/zhishi-ai"
 
     /** 直连优先，失败再走国内加速镜像（只代理 github.com 的下载链接）。 */
     val MIRRORS = listOf("", "https://ghfast.top/", "https://gh-proxy.com/", "https://ghproxy.net/")
@@ -91,8 +91,8 @@ object Updater {
             con.setRequestProperty("Cache-Control", "no-cache")
             val rc = con.responseCode
             val loc = con.getHeaderField("Location") ?: ""
-            val code = Regex("build-(\\d+)").find(loc)?.groupValues?.get(1)?.toIntOrNull()
-            if (rc in 300..399 && code != null) take(Release(code, tr("知时 1.{0}", code), "", apk(code)), m)
+            val code = Regex("ai-(\\d+)").find(loc)?.groupValues?.get(1)?.toIntOrNull()
+            if (rc in 300..399 && code != null) take(Release(code, tr("知时 AI {0}", code), "", apk(code)), m)
             if (rc == 404) priv = true
         }
         // 3) 发布的 atom 订阅，再兜底一次
@@ -100,8 +100,8 @@ object Updater {
             val con = open(m + "https://github.com/$REPO/releases.atom" + bust, 6_000)
             if (con.responseCode == 200) {
                 val txt = con.inputStream.bufferedReader().readText()
-                Regex("build-(\\d+)").findAll(txt).mapNotNull { it.groupValues[1].toIntOrNull() }.maxOrNull()
-                    ?.let { take(Release(it, tr("知时 1.{0}", it), "", apk(it)), m) }
+                Regex("ai-(\\d+)").findAll(txt).mapNotNull { it.groupValues[1].toIntOrNull() }.maxOrNull()
+                    ?.let { take(Release(it, tr("知时 AI {0}", it), "", apk(it)), m) }
             }
         }
         var left = jobs.size
@@ -125,13 +125,13 @@ object Updater {
         return r
     }
 
-    private fun apk(code: Int) = "https://github.com/$REPO/releases/download/build-$code/zhishi-1.$code.apk"
+    private fun apk(code: Int) = "https://github.com/$REPO/releases/download/ai-$code/zhishi-ai-$code.apk"
 
     fun download(c: Context, url: String, progress: (Float) -> Unit): File {
         if (!enabled()) throw IllegalStateException("updater disabled in preview build")
         val order = listOf(mirror) + MIRRORS.filter { it != mirror }
         var last: Exception? = null
-        val want = Regex("build-(\\d+)").find(url)?.groupValues?.get(1)?.toIntOrNull()
+        val want = Regex("ai-(\\d+)").find(url)?.groupValues?.get(1)?.toIntOrNull()
         for (m in order) {
             try {
                 val f = fetch(c, m + url, progress)
@@ -223,7 +223,7 @@ fun AboutScreen() {
         SoftCard(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 AppIcon(72.dp)
-                Text(tr("知时"), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = C.Ink, letterSpacing = 4.sp, modifier = Modifier.padding(top = 10.dp))
+                Text(tr("知时 AI"), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = C.Ink, letterSpacing = 4.sp, modifier = Modifier.padding(top = 10.dp))
                 Text(tr("版本 {0}", BuildConfig.VERSION_NAME), fontSize = 14.sp, color = C.Soft, modifier = Modifier.padding(top = 4.dp))
             }
             if (BuildConfig.PREVIEW) Text(tr("预览版，不检查更新"), fontSize = 14.sp, color = C.Soft, modifier = Modifier.padding(top = 14.dp).align(Alignment.CenterHorizontally))
@@ -256,10 +256,11 @@ fun AboutScreen() {
         }
         Spacer(Modifier.height(14.dp))
         SoftCard(Modifier.fillMaxWidth()) {
-            Text(tr("知时"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = C.Ink)
+            Text(tr("知时 AI"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = C.Ink)
             Text(tr("名字取自杜甫《春夜喜雨》：好雨知时节，当春乃发生。愿它像一场知时的春雨，安安静静地告诉你，现在该去哪儿上课。"),
                 fontSize = 13.sp, color = C.Soft, lineHeight = 21.sp, modifier = Modifier.padding(top = 6.dp))
-            Text(tr("课表只存在这台手机上，不上传任何数据。"), fontSize = 12.sp, color = C.Faint, lineHeight = 18.sp, modifier = Modifier.padding(top = 10.dp))
+            Text(tr("课表、待办和设置都存在这台手机上，知时 AI 没有自己的服务器。只有在你使用 AI 功能（截图识别、AI 助手）时，截图、你发的消息和回答需要的课表 / 待办内容会发给你在「AI 设置」里填的服务商，由它处理。"), fontSize = 12.sp, color = C.Faint, lineHeight = 18.sp, modifier = Modifier.padding(top = 10.dp))
+            Text(tr("这是知时的 AI 版，和知时是两个独立的应用：数据、设置、提醒和小部件互不影响，可以同时安装。"), fontSize = 12.sp, color = C.Faint, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp))
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -275,7 +276,7 @@ fun UpdatePrompt() {
     val c = LocalContext.current
     val scope = rememberCoroutineScope()
     val pr = remember { c.getSharedPreferences("upd", Context.MODE_PRIVATE) }
-    var rel by remember { mutableStateOf<Release?>(pr.getInt("need", 0).let { n -> if (n > BuildConfig.VERSION_CODE) Release(n, tr("知时 1.{0}", n), pr.getString("needNotes", "") ?: "", "https://github.com/${Updater.REPO}/releases/download/build-$n/zhishi-1.$n.apk") else null }) }
+    var rel by remember { mutableStateOf<Release?>(pr.getInt("need", 0).let { n -> if (n > BuildConfig.VERSION_CODE) Release(n, tr("知时 AI {0}", n), pr.getString("needNotes", "") ?: "", "https://github.com/${Updater.REPO}/releases/download/ai-$n/zhishi-ai-$n.apk") else null }) }
     var state by remember { mutableStateOf("ask") } // ask downloading error noperm
     var prog by remember { mutableStateOf(0f) }
 

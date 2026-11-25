@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">Zhishi</string>
-    <string name="w_course4_name">Zhishi · 시간표 4×2</string>
-    <string name="w_course2_name">Zhishi · 시간표 2×2</string>
+    <string name="app_name">Zhishi AI</string>
+    <string name="w_course4_name">Zhishi AI · 시간표 4×2</string>
+    <string name="w_course2_name">Zhishi AI · 시간표 2×2</string>
     <string name="w_course">오늘 지금 수업과 다음 수업</string>
-    <string name="w_todo4_name">Zhishi · 할 일 4×2</string>
-    <string name="w_todo2_name">Zhishi · 할 일 2×2</string>
+    <string name="w_todo4_name">Zhishi AI · 할 일 4×2</string>
+    <string name="w_todo2_name">Zhishi AI · 할 일 2×2</string>
     <string name="w_todo">마감 순으로 모든 할 일을 위젯 안에서 스크롤</string>
 </resources>

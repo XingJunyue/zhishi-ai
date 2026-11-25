@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">Zhishi</string>
-    <string name="w_course4_name">Zhishi · Stundenplan 4×2</string>
-    <string name="w_course2_name">Zhishi · Stundenplan 2×2</string>
+    <string name="app_name">Zhishi AI</string>
+    <string name="w_course4_name">Zhishi AI · Stundenplan 4×2</string>
+    <string name="w_course2_name">Zhishi AI · Stundenplan 2×2</string>
     <string name="w_course">Aktuelle und nächste Stunde heute</string>
-    <string name="w_todo4_name">Zhishi · Aufgaben 4×2</string>
-    <string name="w_todo2_name">Zhishi · Aufgaben 2×2</string>
+    <string name="w_todo4_name">Zhishi AI · Aufgaben 4×2</string>
+    <string name="w_todo2_name">Zhishi AI · Aufgaben 2×2</string>
     <string name="w_todo">Alle offenen Aufgaben nach Fälligkeit – im Widget scrollen</string>
 </resources>

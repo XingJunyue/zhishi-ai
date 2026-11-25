@@ -1,9 +1,9 @@
 <resources>
-    <string name="app_name">知时</string>
-    <string name="w_course4_name">知时 · 课表 4×2</string>
-    <string name="w_course2_name">知时 · 课表 2×2</string>
+    <string name="app_name">知时 AI</string>
+    <string name="w_course4_name">知时 AI · 课表 4×2</string>
+    <string name="w_course2_name">知时 AI · 课表 2×2</string>
     <string name="w_course">今天正在上和下一节的课</string>
-    <string name="w_todo4_name">知时 · 待办 4×2</string>
-    <string name="w_todo2_name">知时 · 待办 2×2</string>
+    <string name="w_todo4_name">知时 AI · 待办 4×2</string>
+    <string name="w_todo2_name">知时 AI · 待办 2×2</string>
     <string name="w_todo">全部待办按截止时间排，可在小部件里滑动查看</string>
 </resources>

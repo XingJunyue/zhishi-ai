@@ -128,16 +128,16 @@ fun TimetableScreen() {
     val c = LocalContext.current
     val scope = rememberCoroutineScope()
     var ver by remember { mutableStateOf(0) }
-    val all = remember(ver) { Term.desired(c) }
+    val all = remember(ver, AiData.ver.value) { Term.desired(c) }
     val courses = remember(all) { all.filter { it.kind == "course" } }
     val pal = remember(courses) { coursePalette(courses) }
-    val starts = remember(ver) { Term.secStarts(c) }
-    val ends = remember(ver) { Term.secEnds(c) }
-    val term = remember(ver) { Term.termStart(c) }
-    val total = remember(ver) { Term.totalWeeks(c) }
-    val showOff = remember(ver) { Term.showOff(c) }
-    val nowWeek = remember(ver) { Term.weekNow(c) }
-    val weekend = remember(ver, courses) { Term.showWeekend(c) || courses.any { s -> s.days.any { it >= 6 } } }
+    val starts = remember(ver, AiData.ver.value) { Term.secStarts(c) }
+    val ends = remember(ver, AiData.ver.value) { Term.secEnds(c) }
+    val term = remember(ver, AiData.ver.value) { Term.termStart(c) }
+    val total = remember(ver, AiData.ver.value) { Term.totalWeeks(c) }
+    val showOff = remember(ver, AiData.ver.value) { Term.showOff(c) }
+    val nowWeek = remember(ver, AiData.ver.value) { Term.weekNow(c) }
+    val weekend = remember(ver, courses, AiData.ver.value) { Term.showWeekend(c) || courses.any { s -> s.days.any { it >= 6 } } }
     val today = Term.todayEpoch()
     fun save(l: List<Slot>) { Term.setDesired(c, l); ver++ }
 
@@ -196,9 +196,10 @@ fun TimetableScreen() {
             decodeText(bytes)
         } catch (x: Exception) { null }
     }
-    val img = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { u ->
-        if (u != null) { busy = tr("正在识别课表…"); msg = null; shot = u
-            Ocr.read(c, u) { r, e -> busy = null; if (r != null) review = r else msg = e } }
+    // AI 识别截图（可以一次选几张）：发给「AI 设置」里的看图模型，认出来的课进导入预览（覆盖 / 追加）
+    val img = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { us ->
+        if (us.isNotEmpty()) { busy = tr("正在识别课表…"); msg = null; shot = us.first()
+            scope.launch { val e = AiChat.recognize(c, us, inChat = false); busy = null; if (e != null) msg = e } }
     }
     /** 日历（文件或订阅链接）读出来后：需要时按日历定开学日期和总周数，再让用户勾选要加的课。 */
     fun useIcs(r: Ics.Result?, err: String?) {
@@ -352,7 +353,7 @@ fun TimetableScreen() {
             "jw" -> web = true
             "csv" -> csv.launch(arrayOf("text/*", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "*/*"))
             "html" -> html.launch(arrayOf("text/html", "application/xhtml+xml", "*/*"))
-            "img" -> img.launch("image/*")
+            "img" -> if (!Ai.ready(c)) msg = aiErrorText(AiError.NotConfigured("all")) else img.launch(androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             "cal" -> if (ContextCompat.checkSelfPermission(c, Manifest.permission.READ_CALENDAR) == PackageManager.PERMISSION_GRANTED)
                 pickCal = try { Term.calendars(c) } catch (x: Exception) { emptyList() } else calPerm.launch(Manifest.permission.READ_CALENDAR)
             "link" -> icsLink = true
@@ -455,7 +456,7 @@ private fun ImportSheet(onClose: () -> Unit, onAdd: () -> Unit, onPick: (String)
             SheetRow("教", tr("从教务导入"), tr("登录学校教务网站，一键导入")) { onPick("jw") }
             SheetRow("▤", tr("Excel / CSV 导入"), if (Tr.cjk) tr("课程名、星期、节次、老师、地点、周数") else tr("Workday 等选课系统导出的课程清单，或自己整理的表格")) { onPick("csv") }
             SheetRow("⌘", tr("HTML 导入"), tr("保存下来的教务课表网页")) { onPick("html") }
-            SheetRow("◫", tr("截图识别"), tr("课表截图，本机识别")) { onPick("img") }
+            SheetRow("✦", tr("AI 识别截图"), tr("课表截图发给你设置的 AI 识别")) { onPick("img") }
             SheetRow("◷", tr("从日历导入"), tr("系统日历里的课程日程")) { onPick("cal") }
             if (Tr.cjk) SheetRow("⟳", tr("日历订阅链接"), tr("Canvas、Moodle、学校课表系统的 iCal 链接")) { onPick("link") }
             SheetRow("◇", tr(".ics 文件"), tr("课表 App 或教务导出的日历文件")) { onPick("ics") }
