@@ -239,7 +239,8 @@ private fun AiChatBody(modifier: Modifier) {
         if (uris.isNotEmpty()) scope.launch { AiChat.recognize(c, uris, inChat = true) }
     }
     fun attach() = pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-    LaunchedEffect(items.size, AiChat.busy.value) { if (items.isNotEmpty()) list.animateScrollToItem(items.size) }
+    // 撤销条出现 / 消失时列表变矮 / 变高：重新滚到底，免得最后一张卡片的底部（撤销）被截掉
+    LaunchedEffect(items.size, AiChat.busy.value, AiChat.toast.value != null) { if (items.isNotEmpty()) { delay(50); list.animateScrollToItem(items.size) } }
     LaunchedEffect(AiChat.toast.value) { if (AiChat.toast.value != null) { delay(6000); AiChat.toast.value = null } }
 
     Column(modifier.fillMaxWidth()) {
