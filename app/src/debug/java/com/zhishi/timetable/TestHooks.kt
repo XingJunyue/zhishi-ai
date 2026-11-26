@@ -65,14 +65,29 @@ object TestHooks {
         }
         //  --ez aisheet true [--es aitab todo] [--ez aifull true]  打开 AI 面板（截图用）
         if (i.getBooleanExtra("aisheet", false)) { AiChat.wantFull.value = i.getBooleanExtra("aifull", false); AiChat.show(i.getStringExtra("aitab") ?: "table") }
+        //  --es aiquote user|bot|card  回复最后一条用户的话 / AI 的话 / 确认卡片（和长按 →「回复」同一个状态）；配合 aisay 发出去
+        i.getStringExtra("aiquote")?.let { k ->
+            val t = if (k == "none") null else AiChat.items.lastOrNull { when (k) { "user" -> it is ChatItem.User; "card" -> it is ChatItem.Card; else -> it is ChatItem.Bot } }
+            AiChat.replyTo.value = t
+            if (!i.hasExtra("aisay") && k != "none" && !i.getBooleanExtra("ainosheet", false)) { AiChat.wantFull.value = i.getBooleanExtra("aifull", false); AiChat.show(i.getStringExtra("aitab") ?: "table") }
+            Log.i("ZhishiTest", "AIQUOTE $k ${t?.let { AiChat.quoteOf(it)?.text?.take(60) } ?: "none"}")
+        }
+        //  --ez aihist true  打出对话记录（AIHIST n=… 和每段的 标题|条数|卡片状态）
+        if (i.getBooleanExtra("aihist", false)) {
+            val l = AiChatStore.all(c)
+            Log.i("ZhishiTest", "AIHIST n=${l.size} current=${AiChat.convoId}")
+            l.forEach { cv -> Log.i("ZhishiTest", "AIHIST ${cv.id}|${cv.title}|${cv.count}|cards=${cv.items.mapNotNull { it.card?.state }.joinToString(",")}|quotes=${cv.items.count { it.quote != null }}|h=${cv.history.size}") }
+        }
         //  --es aisay 文字  打开面板并发出去；完成后打 AISAY DONE + 每张卡片 AISAY CARD
+        //  --ez ainosheet true：不打开面板（在「AI 对话记录」整页里接着发）
         i.getStringExtra("aisay")?.let { t ->
-            AiChat.wantFull.value = i.getBooleanExtra("aifull", false); AiChat.show(i.getStringExtra("aitab") ?: "table")
+            if (!i.getBooleanExtra("ainosheet", false)) { AiChat.wantFull.value = i.getBooleanExtra("aifull", false); AiChat.show(i.getStringExtra("aitab") ?: "table") }
             kotlinx.coroutines.MainScope().launch {
                 AiChat.say(c, t)
                 for (it in AiChat.items) when (it) {
-                    is ChatItem.Card -> Log.i("ZhishiTest", "AISAY CARD ${it.plan.changes.joinToString(" / ") { ch -> ch.title }} state=${it.st.value}")
+                    is ChatItem.Card -> Log.i("ZhishiTest", "AISAY CARD ${it.changes.joinToString(" / ") { ch -> ch.title }} state=${it.st.value}")
                     is ChatItem.Bot -> Log.i("ZhishiTest", "AISAY BOT ${it.text.take(120)}")
+                    is ChatItem.User -> if (it.quote != null) Log.i("ZhishiTest", "AISAY QUOTE ${if (it.quote.fromUser) "user" else "bot"}|${it.quote.text.take(60)}|${it.text.take(60)}")
                     is ChatItem.Error -> Log.i("ZhishiTest", "AISAY ERROR ${it.text.take(200)}")
                     else -> {}
                 }

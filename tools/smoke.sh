@@ -25,6 +25,18 @@ tapExact() {
   local b; b=$(adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep -F "text=\"$1\"" | head -1 | sed -nE 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/p')
   if [ -n "$b" ]; then local x1 y1 x2 y2; read -r x1 y1 x2 y2 <<< "$b"; adb shell input tap $(( (x1+x2)/2 )) $(( (y1+y2)/2 )); else echo "tapExact: '$1' not found"; fi
 }
+# 按 content-desc 点（只有图标没有文字的按钮，比如导航条正中间的 ✦）
+tapDesc() {
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
+  local b; b=$(adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep -F "content-desc=\"$1\"" | head -1 | sed -nE 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/p')
+  if [ -n "$b" ]; then local x1 y1 x2 y2; read -r x1 y1 x2 y2 <<< "$b"; adb shell input tap $(( (x1+x2)/2 )) $(( (y1+y2)/2 )); else echo "tapDesc: '$1' not found"; fi
+}
+# 某段文字的中心坐标（找不到输出空）
+textXY() {
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
+  adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep -F "text=\"$1" | head -1 | sed -nE 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/p' | { read -r x1 y1 x2 y2 && echo "$(( (x1+x2)/2 )) $(( (y1+y2)/2 ))"; }
+}
+onScreen() { adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1; adb shell cat /sdcard/ui.xml | grep -qF "$1"; }
 crashed() { adb logcat -d -b crash | grep -q "$P" ; }
 
 # 等系统完全起来，关掉错误对话框（模拟器慢，桌面常报「没有响应」盖住截图）
@@ -51,6 +63,13 @@ adb shell am start -n $P/com.zhishi.timetable.MainActivity; shot 01-home 6
 tapText 待办; shot 02-nav-todo 3
 tapText 日历; shot 02-nav-calendar 3
 tapText 我的; shot 02-nav-me 3
+# 「我的」改版：顶部（不显示版本号）、滑到底；底部导航条正中间的 ✦
+shot 13-me-top 1
+onScreen "版本 ai-" && { echo "version shown in 我的 header"; fail=1; }
+adb shell input swipe 540 1900 540 400 400; shot 13-me-scrolled 2
+adb shell input swipe 540 1900 540 400 400; shot 13-me-bottom 2
+for s in me_skin me_todo me_backup me_lang me_help ai_history; do go "$s"; shot "13-$s" 3; done
+go me; sleep 1
 tapText 课表; shot 02-nav-table 3
 # 我的页里点进去的小部件页、关于页；我的页往下滑
 for s in widget settings about; do
@@ -79,7 +98,7 @@ for mode in 1 2; do
     adb shell am start -n $P/com.zhishi.timetable.MainActivity --es skin $sk --ei mode $mode > /dev/null; go table:0; shot "09-skin-$tag" 3
     go widget; shot "09-widget-$tag" 3
   done
-  go settings; shot "09-picker-$mode" 3
+  go me_skin; shot "09-picker-$mode" 3
   go todo; shot "09-todo-$mode" 3
   go calendar; shot "09-calendar-$mode" 3
 done
@@ -212,7 +231,7 @@ adb shell input swipe 540 1500 540 700 300; shot 12-ai-settings-test-b 2
 tapExact 从接口获取模型列表; sleep 4; shot 12-ai-settings-models 2
 go table:0; sleep 1
 # 点导航条上的 ✦（AI）打开半屏面板；拉满；从待办页打开（待办的建议）
-tapExact AI; shot 12-ai-sheet-half 3
+tapDesc "AI 助手"; shot 12-ai-sheet-half 3
 adb shell input keyevent KEYCODE_BACK; sleep 1
 adb shell am start -n $P/$A --ez aisheet true --ez aifull true > /dev/null; shot 12-ai-sheet-full 3
 adb shell input keyevent KEYCODE_BACK; sleep 1
@@ -263,6 +282,54 @@ adb logcat -d -s ZhishiTest | grep "AIREC" | tee shots/airec.txt
 for want in "AIREC OK 4" "1|大学物理|5-6|1,3,5,7,9,11,13,15|" "2|大学英语|3-4|2,4,6,8,10,12,14,16|" "3|线性代数|1-2|1,2,3,4,5,6,7,8|"; do
   grep -qF "$want" shots/airec.txt || { echo "AI recognition missing: $want"; fail=1; }
 done
+# 回复某一条（引用）：回复 AI 的话、回复自己的话；引用要真的发给模型（假接口把引用原文回出来）
+adb shell am start -n $P/$A --es aiquote bot > /dev/null; shot 13-ai-quote-bar 3
+adb logcat -c
+adb shell am start -n $P/$A --es aiquote bot --es aisay "那周三呢" > /dev/null; aiwait "AISAY DONE"; shot 13-ai-quote-bot 2
+adb logcat -d -s ZhishiTest | grep "AISAY\|AIQUOTE" | tee shots/ai-quote.txt
+grep -q "AISAY QUOTE bot|周二有大学英语" shots/ai-quote.txt || { echo "quote (bot) not shown on the message"; fail=1; }
+grep -q "AISAY BOT 收到，你在回复我之前的回复：「周二有大学英语" shots/ai-quote.txt || { echo "quote (bot) not sent to the model"; fail=1; }
+adb logcat -c
+adb shell am start -n $P/$A --es aiquote user --es aisay "再确认一下" > /dev/null; aiwait "AISAY DONE"; shot 13-ai-quote-user 2
+adb logcat -d -s ZhishiTest | grep "AISAY\|AIQUOTE" | tee -a shots/ai-quote.txt | grep -q "AISAY BOT 收到，你在回复你自己之前说的：「那周三呢" || { echo "quote (user) not sent to the model"; fail=1; }
+# 真手势：长按一条消息 → 菜单「回复 / 复制」→ 点「回复」出引用条；往右滑一条 AI 的消息也出引用条
+xy=$(textXY "再确认一下")
+if [ -n "$xy" ]; then read -r x y <<< "$xy"; adb shell input swipe $x $y $x $y 900; shot 13-ai-longpress-menu 2
+  tapExact 回复; shot 13-ai-reply-menu 2
+  onScreen "回复我自己" || { echo "long-press reply bar missing"; fail=1; }
+else echo "message bubble not found for long-press"; fail=1; fi
+adb shell am start -n $P/$A --es aiquote none > /dev/null; sleep 1
+xy=$(textXY "收到，你在回复你自己")
+if [ -n "$xy" ]; then read -r x y <<< "$xy"; adb shell input swipe 120 $y 520 $y 350; shot 13-ai-swipe-reply 2
+  onScreen "回复 AI" || { echo "swipe reply bar missing"; fail=1; }
+else echo "bot bubble not found for swipe"; fail=1; fi
+adb shell am start -n $P/$A --es aiquote none > /dev/null; sleep 1
+adb shell input keyevent KEYCODE_BACK; sleep 1
+# 第二段对话，然后看对话记录；杀掉进程再打开，记录还在；打开旧对话：卡片只显示最后的状态（不能再确认），能接着聊、能回复
+adb logcat -c
+adb shell am start -n $P/$A --ez aireset true --es aisay "周二有什么课" > /dev/null; aiwait "AISAY DONE"
+adb shell input keyevent KEYCODE_BACK; sleep 1
+adb shell am force-stop $P; sleep 1
+adb logcat -c
+adb shell am start -n $P/$A --ez aihist true > /dev/null; sleep 6
+adb logcat -d -s ZhishiTest | grep "AIHIST" | tee shots/ai-hist.txt
+grep -q "AIHIST n=2" shots/ai-hist.txt || { echo "chat history not persisted across restart (want 2 chats)"; fail=1; }
+grep -q "|cards=.*3" shots/ai-hist.txt || { echo "undone card state not persisted"; fail=1; }
+grep -q "quotes=2" shots/ai-hist.txt || { echo "quotes not persisted"; fail=1; }
+go ai_history; shot 13-ai-history 3
+go ai_convo:2; shot 13-ai-convo-old 4
+adb shell input swipe 540 700 540 1900 300; shot 13-ai-convo-old-top 2
+adb shell input swipe 540 700 540 1900 300; shot 13-ai-convo-old-top2 2
+adb logcat -c
+adb shell am start -n $P/$A --ez aiconfirm true > /dev/null; sleep 2
+adb logcat -d -s ZhishiTest | grep "AICONFIRM" | tee -a shots/ai-hist.txt | grep -q "AICONFIRM none" || { echo "old card could be confirmed again"; fail=1; }
+adb logcat -c
+adb shell am start -n $P/$A --ez ainosheet true --es aiquote bot --es aisay "接着聊" > /dev/null; aiwait "AISAY DONE"; sleep 1; shot 13-ai-convo-continued 2
+adb logcat -d -s ZhishiTest | grep "AISAY" | tee -a shots/ai-hist.txt | grep -q "AISAY BOT 收到，你在回复我之前的回复：「收到，你在回复你自己" || { echo "continuing an old chat failed"; fail=1; }
+adb shell am start -n $P/$A --es aiquote none > /dev/null
+go table:0; sleep 2
+tapDesc "AI 助手"; shot 13-ai-sheet-open 3
+adb shell input keyevent KEYCODE_BACK; sleep 1
 go table:8; shot 12-import-menu-ai 3
 go table:0; sleep 1
 kill $FA 2>/dev/null

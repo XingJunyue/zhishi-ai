@@ -27,6 +27,9 @@ class AiAgent(var client: AiClient, private val maxRounds: Int = 4) {
 
     fun reset() { history.clear(); pending = null }
 
+    /** 打开一段存下来的对话：换上它的历史（先由 AiConvos.repair 整理过：每个工具调用都有结果），没有待确认的。 */
+    fun restore(h: List<AiMessage>) { reset(); history.addAll(AiConvos.repair(h)) }
+
     /** 系统提示：规则 + 当前数据。 */
     fun system(s: AppState, env: AiEnv, lang: String): String {
         val today = Todos.dayOfMs(env.now, env.tz)

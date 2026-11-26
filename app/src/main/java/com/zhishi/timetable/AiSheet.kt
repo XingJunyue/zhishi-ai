@@ -15,6 +15,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -50,13 +53,37 @@ import kotlinx.coroutines.withContext
 
 /** 对话里的一项。 */
 sealed class ChatItem {
-    val key = "k" + System.nanoTime()
-    class User(val text: String, val images: Int = 0) : ChatItem()
+    val key = "k" + SEQ.incrementAndGet()
+    /** quote = 这句话在回复哪一条。 */
+    class User(val text: String, val images: Int = 0, val quote: AiQuote? = null) : ChatItem()
     class Bot(val text: String) : ChatItem()
-    class Card(val plan: AiPlan) : ChatItem() { val st = mutableStateOf(0) }
+    /** plan = null：从对话记录里读回来的卡片，只显示最后的状态，不能再应用。 */
+    class Card(val plan: AiPlan?, val changes: List<AiChange>, val failed: Int, initial: Int = PENDING) : ChatItem() {
+        constructor(plan: AiPlan) : this(plan, plan.changes, plan.results.count { !it.ok })
+        val st = mutableStateOf(initial)
+    }
     class Error(val text: String, val retry: Boolean) : ChatItem()
     class Info(val text: String) : ChatItem()
-    companion object { const val PENDING = 0; const val APPLIED = 1; const val CANCELLED = 2; const val UNDONE = 3 }
+    companion object {
+        const val PENDING = AiConvos.PENDING; const val APPLIED = AiConvos.APPLIED; const val CANCELLED = AiConvos.CANCELLED; const val UNDONE = AiConvos.UNDONE
+        private val SEQ = java.util.concurrent.atomic.AtomicLong()
+        /** 存储用的样子。 */
+        fun saved(i: ChatItem): SavedItem = when (i) {
+            is User -> SavedItem(AiConvos.USER, i.text, i.quote, i.images)
+            is Bot -> SavedItem(AiConvos.BOT, i.text)
+            is Card -> SavedItem(AiConvos.CARD, card = SavedCard(i.changes, i.failed, i.st.value))
+            is Error -> SavedItem(AiConvos.ERROR, i.text, retry = i.retry)
+            is Info -> SavedItem(AiConvos.INFO, i.text)
+        }
+        /** 读回来：卡片没有 plan（不能再应用），还没确认的算已取消；出错的不再给「重试」。 */
+        fun restored(s: SavedItem): ChatItem = when (s.kind) {
+            AiConvos.USER -> User(s.text, s.images, s.quote)
+            AiConvos.BOT -> Bot(s.text)
+            AiConvos.CARD -> Card(null, s.card?.changes ?: emptyList(), s.card?.failed ?: 0, AiConvos.restoredState(s.card?.state ?: CANCELLED))
+            AiConvos.ERROR -> Error(s.text, false)
+            else -> Info(s.text)
+        }
+    }
 }
 
 /** AI 助手的状态（进程内，收起面板不丢）。 */
@@ -73,17 +100,59 @@ object AiChat {
     val wantFull = mutableStateOf(false)
     /** 等着导入预览的识别结果。 */
     val recognized = mutableStateOf<List<JwCourse>?>(null)
+    /** 正在回复哪一条（输入框上面的引用条）。 */
+    val replyTo = mutableStateOf<ChatItem?>(null)
+    /** 现在这段对话在对话记录里的 id 和开始时间。 */
+    var convoId = newId(); private set
+    private var created = 0L
+    private fun newId() = "c" + System.currentTimeMillis().toString(36) + (100..999).random()
     private var agent: AiAgent? = null
     fun agent(c: android.content.Context): AiAgent = (agent ?: AiAgent(Ai.client(c)).also { agent = it }).also { it.client = Ai.client(c) }
-    fun reset() { items.clear(); agent?.reset(); toast.value = null }
+    fun reset() { items.clear(); agent?.reset(); toast.value = null; replyTo.value = null; convoId = newId(); created = 0L }
     fun show(tab: String) { from.value = tab; open.value = true }
 
-    /** 发一句话（在协程里调）。 */
+    /** 引用某一条：用户 / AI 的话、确认卡片（改动标题）。出错和提示不能引用。 */
+    fun quoteOf(i: ChatItem): AiQuote? = when (i) {
+        is ChatItem.User -> AiQuote(true, i.text)
+        is ChatItem.Bot -> AiQuote(false, i.text)
+        is ChatItem.Card -> AiQuote(false, AiConvos.quoteText(ChatItem.saved(i)))
+        else -> null
+    }?.takeIf { it.text.isNotBlank() }
+
+    /** 存进对话记录（有用户说过话才存）：每一步之后都调，杀掉进程也不丢。 */
+    fun persist(c: android.content.Context) {
+        if (items.none { it is ChatItem.User }) return
+        val now = System.currentTimeMillis(); if (created == 0L) created = now
+        val saved = items.map { ChatItem.saved(it) }
+        try { AiChatStore.put(c, AiConvo(convoId, created, now, AiConvos.title(saved), saved, agent?.history?.toList() ?: emptyList())) }
+        catch (e: Throwable) { android.util.Log.w("ZhishiAi", "save chat failed", e) }
+    }
+
+    /** 打开对话记录里的一段接着聊（正在想的时候不换）。 */
+    fun load(c: android.content.Context, id: String): Boolean {
+        if (id == convoId && items.isNotEmpty()) return true
+        if (busy.value != null) return false
+        val cv = AiChatStore.get(c, id) ?: return false
+        cancelPending(c)
+        persist(c)
+        items.clear(); items.addAll(cv.items.map { ChatItem.restored(it) })
+        agent(c).restore(cv.history)
+        convoId = cv.id; created = cv.created
+        toast.value = null; toastUndo.value = false; replyTo.value = null
+        return true
+    }
+    /** 对话记录里删掉了正在进行的这段：界面上也清空。 */
+    fun forget(id: String) { if (id == convoId) reset() }
+
+    /** 发一句话（在协程里调）。带着引用时，发给模型的话前面加上引用的那条。 */
     suspend fun say(c: android.content.Context, text: String) {
         val t = text.trim(); if (t.isEmpty() || busy.value != null) return
+        val q = replyTo.value?.let { quoteOf(it) }
+        replyTo.value = null
         cancelPending(c)
-        items += ChatItem.User(t)
-        run(c) { a, st -> a.send(t, st, aiEnv(), Tr.lang) }
+        items += ChatItem.User(t, quote = q)
+        val content = AiConvos.quoteContext(t, q, Tr.lang)
+        run(c) { a, st -> a.send(content, st, aiEnv(), Tr.lang) }
     }
     suspend fun retry(c: android.content.Context) {
         if (busy.value != null) return
@@ -91,7 +160,7 @@ object AiChat {
         run(c) { a, st -> a.retry(st, aiEnv(), Tr.lang) }
     }
     private suspend fun run(c: android.content.Context, f: (AiAgent, AppState) -> List<AiAgent.Step>) {
-        if (!Ai.ready(c)) { items += ChatItem.Error(aiErrorText(AiError.NotConfigured("all")), false); return }
+        if (!Ai.ready(c)) { items += ChatItem.Error(aiErrorText(AiError.NotConfigured("all")), false); persist(c); return }
         busy.value = tr("正在想…")
         val a = agent(c)
         val steps = withContext(Dispatchers.IO) { try { f(a, AiStateIO.read(c)) } catch (e: Throwable) { listOf(AiAgent.Step.Failed(e)) } }
@@ -102,6 +171,7 @@ object AiChat {
             is AiAgent.Step.Nav -> { Nav.open.value = s.dest; open.value = false }
             is AiAgent.Step.Failed -> items += ChatItem.Error(aiErrorText(s.error), true)
         }
+        persist(c)
     }
     /** 有没确认的卡片：用户直接发了新消息，就当取消。 */
     private fun cancelPending(c: android.content.Context) {
@@ -109,19 +179,26 @@ object AiChat {
         agent?.let { if (it.hasPending) it.resolve(false, null) }
     }
     fun confirm(c: android.content.Context, card: ChatItem.Card): Boolean {
-        val ok = try { AiUndo.apply(c, card.plan); true } catch (e: Throwable) { android.util.Log.w("ZhishiAi", "apply failed", e); false }
+        val plan = card.plan ?: return false
+        if (card.st.value != ChatItem.PENDING) return false
+        val ok = try { AiUndo.apply(c, plan); true } catch (e: Throwable) { android.util.Log.w("ZhishiAi", "apply failed", e); false }
         agent(c).resolve(ok, if (ok) null else "saving failed on the device")
         card.st.value = if (ok) ChatItem.APPLIED else ChatItem.CANCELLED
-        toast.value = if (ok) tr("已应用 {0} 项更改", card.plan.changes.size) else tr("保存失败"); toastUndo.value = ok
+        toast.value = if (ok) tr("已应用 {0} 项更改", plan.changes.size) else tr("保存失败"); toastUndo.value = ok
+        persist(c)
         return ok
     }
-    fun cancel(c: android.content.Context, card: ChatItem.Card) { card.st.value = ChatItem.CANCELLED; agent(c).resolve(false, null) }
+    fun cancel(c: android.content.Context, card: ChatItem.Card) {
+        if (card.plan == null || card.st.value != ChatItem.PENDING) return
+        card.st.value = ChatItem.CANCELLED; agent(c).resolve(false, null); persist(c)
+    }
     fun undo(c: android.content.Context) {
         val conflicts = try { AiUndo.undo(c) } catch (e: Throwable) { -1 }
-        for (i in items) if (i is ChatItem.Card && i.st.value == ChatItem.APPLIED) i.st.value = ChatItem.UNDONE
+        for (i in items) if (i is ChatItem.Card && i.plan != null && i.st.value == ChatItem.APPLIED) i.st.value = ChatItem.UNDONE
         agent?.noteUndo()
         toastUndo.value = false
         toast.value = when { conflicts < 0 -> tr("撤销失败"); conflicts > 0 -> tr("已撤销；有 {0} 处在那之后又改过，没动", conflicts); else -> tr("已撤销") }
+        persist(c)
     }
     /** 回复里的 Markdown 粗体、标题符号去掉（界面是纯文字）。 */
     fun plain(t: String) = t.replace("**", "").replace(Regex("(?m)^#{1,6}\\s*"), "").trim()
@@ -140,12 +217,13 @@ object AiChat {
         busy.value = null
         val err = r.exceptionOrNull()?.let { if (it is IllegalStateException) it.message else aiErrorText(it, !Ai.hasVisionModel(c)) }
         val out = r.getOrNull()
-        if (out != null && out.courses.isEmpty()) return tr("没认出课程，换一张更清楚、带星期表头的截图试试").also { if (inChat) items += ChatItem.Error(it, false) }
-        if (err != null) { if (inChat) items += ChatItem.Error(err, false); return err }
+        if (out != null && out.courses.isEmpty()) return tr("没认出课程，换一张更清楚、带星期表头的截图试试").also { if (inChat) { items += ChatItem.Error(it, false); persist(c) } }
+        if (err != null) { if (inChat) { items += ChatItem.Error(err, false); persist(c) }; return err }
         out!!
         if (inChat) {
             agent(c).noteRecognition(out.courses.size, out.courses.map { it.name })
             items += ChatItem.Info(tr("认出 {0} 节课，在导入预览里选「覆盖」或「追加」", out.courses.size) + if (out.dropped > 0) "；" + tr("{0} 条不完整的已跳过", out.dropped) else "")
+            persist(c)
         }
         recognized.value = out.courses
         return null
@@ -209,8 +287,10 @@ fun AiSheetHost() {
                 Box(Modifier.align(Alignment.CenterHorizontally).padding(top = 10.dp, bottom = 6.dp).size(36.dp, 4.dp).background(C.Faint.copy(alpha = 0.45f), RoundedCornerShape(2.dp)))
                 Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                     SparkleIcon(C.ClayDeep, true, Modifier.size(18.dp))
-                    Text(tr("AI 助手"), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = C.Ink, modifier = Modifier.padding(start = 8.dp).weight(1f))
+                    Text(tr("AI 助手"), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = C.Ink, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 8.dp).weight(1f))
                     HeadLink(tr("新对话")) { AiChat.reset() }
+                    HeadLink(tr("记录")) { AiChat.open.value = false; AiChat.wantFull.value = false; Nav.open.value = "ai_history" }
                     HeadLink(tr("设置")) { AiChat.open.value = false; Nav.open.value = "ai_settings" }
                     HeadLink("⌄") { AiChat.open.value = false; AiChat.wantFull.value = false }
                 }
@@ -226,8 +306,9 @@ private fun HeadLink(t: String, onClick: () -> Unit) {
         modifier = Modifier.padding(start = 4.dp).clip(RoundedCornerShape(10.dp)).clickable { onClick() }.padding(horizontal = 8.dp, vertical = 6.dp))
 }
 
+/** 对话本体（列表 + 撤销条 + 引用条 + 输入框）：半屏面板和「AI 对话记录」里打开的整页共用。inSheet = 在面板里（自己让开导航栏）。 */
 @Composable
-private fun AiChatBody(modifier: Modifier) {
+fun AiChatBody(modifier: Modifier, inSheet: Boolean = true) {
     val c = LocalContext.current
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
@@ -243,14 +324,19 @@ private fun AiChatBody(modifier: Modifier) {
     LaunchedEffect(items.size, AiChat.busy.value, AiChat.toast.value != null) { if (items.isNotEmpty()) { delay(50); list.animateScrollToItem(items.size) } }
     LaunchedEffect(AiChat.toast.value) { if (AiChat.toast.value != null) { delay(6000); AiChat.toast.value = null } }
 
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val reply: (ChatItem) -> Unit = { AiChat.replyTo.value = it }
+    val copy: (String) -> Unit = { t -> clipboard.setText(androidx.compose.ui.text.AnnotatedString(t)); AiChat.toastUndo.value = false; AiChat.toast.value = tr("已复制") }
+    // 选了要回复的那条：滚到底，让引用条和输入框都看得见
+    LaunchedEffect(AiChat.replyTo.value) { if (AiChat.replyTo.value != null && items.isNotEmpty()) { delay(50); list.animateScrollToItem(items.size) } }
     Column(modifier.fillMaxWidth()) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
             if (items.isEmpty()) item { Welcome(ready, onChip = { t, send -> if (send) scope.launch { AiChat.say(c, t) } else input = t }, onShot = { attach() }) }
             items(items, key = { it.key }) { it0 -> ChatRow(it0, onRetry = { scope.launch { AiChat.retry(c) } },
                 onConfirm = { card ->
-                    if (AiChat.confirm(c, card) && Build.VERSION.SDK_INT >= 33 && card.plan.after.todos.any { it.remind && !it.done } && !TodoAlarm.canNotify(c))
+                    if (AiChat.confirm(c, card) && Build.VERSION.SDK_INT >= 33 && card.plan?.after?.todos?.any { it.remind && !it.done } == true && !TodoAlarm.canNotify(c))
                         perm.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }, onCancel = { AiChat.cancel(c, it) }, onUndo = { AiChat.undo(c) }) }
+                }, onCancel = { AiChat.cancel(c, it) }, onUndo = { AiChat.undo(c) }, onReply = reply, onCopy = copy) }
             AiChat.busy.value?.let { b -> item { Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(14.dp), color = C.Clay, strokeWidth = 2.dp); Text("  $b", fontSize = 13.sp, color = C.Soft) } } }
         }
@@ -264,8 +350,10 @@ private fun AiChatBody(modifier: Modifier) {
                         modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { AiChat.undo(c) }.padding(horizontal = 8.dp, vertical = 4.dp))
             }
         }
+        // 引用条：正在回复哪一条（点 ✕ 不回复了）
+        AiChat.replyTo.value?.let { r -> AiChat.quoteOf(r)?.let { q -> ReplyBar(q) { AiChat.replyTo.value = null } } }
         // 输入：附图 + 文字 + 发送
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().then(if (inSheet) Modifier.navigationBarsPadding() else Modifier).padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(42.dp).glassButton(CircleShape, shadow = 0.dp) { attach() }, contentAlignment = Alignment.Center) { ImageGlyph(C.Ink) }
             Box(Modifier.weight(1f).padding(horizontal = 8.dp).liquidGlass(RoundedCornerShape(21.dp), fill = Glass.field(), shadow = 0.dp).padding(horizontal = 14.dp, vertical = 11.dp)) {
                 if (input.isEmpty()) Text(if (ready) tr("说说要改什么，或者问问课表") else tr("先在「设置」里填好 AI 接口"), fontSize = 14.sp, color = C.Faint, maxLines = 1)
@@ -304,22 +392,93 @@ private fun AiChip(t: String, onClick: () -> Unit) {
         .glassButton(CircleShape, tint = C.Clay, shadow = 0.dp) { onClick() }.padding(horizontal = 12.dp, vertical = 7.dp))
 }
 
+/** 输入框上面的引用条：左边一道主色竖线 + 「回复 AI / 回复我自己」+ 那条消息的第一行 + ✕。 */
 @Composable
-private fun ChatRow(it: ChatItem, onRetry: () -> Unit, onConfirm: (ChatItem.Card) -> Unit, onCancel: (ChatItem.Card) -> Unit, onUndo: () -> Unit) {
-    when (it) {
-        is ChatItem.User -> Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.End) {
-            Text(it.text, fontSize = 14.sp, color = C.OnClay, lineHeight = 20.sp, style = androidx.compose.material3.LocalTextStyle.current.copy(shadow = null),
-                modifier = Modifier.widthIn(max = 280.dp).clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)).background(C.Clay.copy(alpha = 0.88f)).padding(horizontal = 12.dp, vertical = 8.dp))
+private fun ReplyBar(q: AiQuote, onClose: () -> Unit) {
+    Row(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp).fillMaxWidth().height(IntrinsicSize.Min)
+        .liquidGlass(RoundedCornerShape(14.dp), fill = Glass.field(), shadow = 0.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(3.dp).fillMaxHeight().background(C.Clay))
+        Column(Modifier.weight(1f).padding(start = 10.dp, top = 7.dp, bottom = 7.dp)) {
+            Text(if (q.fromUser) tr("回复我自己") else tr("回复 AI"), fontSize = 11.sp, color = C.ClayDeep, fontWeight = FontWeight.SemiBold)
+            Text(q.text.replace('\n', ' '), fontSize = 13.sp, color = C.Soft, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
-        is ChatItem.Bot -> Text(it.text, fontSize = 14.sp, color = C.Ink, lineHeight = 21.sp,
-            modifier = Modifier.padding(vertical = 4.dp).widthIn(max = 320.dp).clip(RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)).background(C.Card.copy(alpha = 0.7f)).padding(horizontal = 12.dp, vertical = 8.dp))
+        Text("✕", fontSize = 14.sp, color = C.Faint, modifier = Modifier.clip(CircleShape).clickable { onClose() }.padding(horizontal = 14.dp, vertical = 10.dp))
+    }
+}
+
+/** 消息里显示的引用：一道竖线 + 「我 / AI」+ 最多两行原文。onClay = 画在用户的主色气泡里。 */
+@Composable
+private fun QuoteChip(q: AiQuote, onClay: Boolean) {
+    val fg = if (onClay) C.OnClay else C.Soft
+    Row(Modifier.padding(bottom = 6.dp).height(IntrinsicSize.Min).clip(RoundedCornerShape(10.dp)).background((if (onClay) C.OnClay else C.Clay).copy(alpha = 0.14f))) {
+        Box(Modifier.width(3.dp).fillMaxHeight().background(fg.copy(alpha = 0.55f)))
+        Column(Modifier.padding(horizontal = 8.dp, vertical = 5.dp)) {
+            Text(if (q.fromUser) tr("我") else tr("AI"), fontSize = 11.sp, color = fg.copy(alpha = 0.9f), fontWeight = FontWeight.SemiBold,
+                style = androidx.compose.material3.LocalTextStyle.current.copy(shadow = null))
+            Text(q.text, fontSize = 12.sp, color = fg.copy(alpha = 0.85f), lineHeight = 17.sp, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                style = androidx.compose.material3.LocalTextStyle.current.copy(shadow = null))
+        }
+    }
+}
+
+/**
+ * 能回复的一条消息：长按出「回复 / 复制」，往右滑过一段距离松手也是回复（滑的时候左边露出 ↩）。
+ */
+@Composable
+private fun Replyable(onReply: () -> Unit, copyText: String?, onCopy: (String) -> Unit, content: @Composable () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val trig = with(density) { 56.dp.toPx() }; val max = with(density) { 84.dp.toPx() }
+    var dx by remember { mutableStateOf(0f) }
+    var menu by remember { mutableStateOf(false) }
+    val reply = rememberUpdatedState(onReply)
+    val drag = rememberDraggableState { d ->
+        val before = dx
+        dx = (dx + d).coerceIn(0f, max)
+        if (before < trig && dx >= trig) haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+    }
+    Box(Modifier.fillMaxWidth()) {
+        if (dx > 2f) Text("↩", fontSize = 18.sp, color = C.ClayDeep, fontWeight = FontWeight.Bold,
+            modifier = Modifier.align(Alignment.CenterStart).padding(start = 6.dp).graphicsLayer { alpha = (dx / trig).coerceIn(0f, 1f); val k = 0.6f + 0.4f * (dx / trig).coerceIn(0f, 1f); scaleX = k; scaleY = k })
+        Box(Modifier.fillMaxWidth().offset { androidx.compose.ui.unit.IntOffset(dx.toInt(), 0) }
+            .draggable(drag, Orientation.Horizontal, onDragStopped = {
+                if (dx >= trig) reply.value()
+                scope.launch { androidx.compose.animation.core.animate(dx, 0f, animationSpec = spring(dampingRatio = 0.7f, stiffness = 500f)) { v, _ -> dx = v } }
+            })
+            .pointerInput(Unit) { detectTapGestures(onLongPress = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); menu = true }) }) {
+            content()
+            androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
+                androidx.compose.material3.DropdownMenuItem(text = { Text(tr("回复"), fontSize = 14.sp, color = C.Ink) }, onClick = { menu = false; reply.value() })
+                if (copyText != null) androidx.compose.material3.DropdownMenuItem(text = { Text(tr("复制"), fontSize = 14.sp, color = C.Ink) }, onClick = { menu = false; onCopy(copyText) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatRow(it: ChatItem, onRetry: () -> Unit, onConfirm: (ChatItem.Card) -> Unit, onCancel: (ChatItem.Card) -> Unit, onUndo: () -> Unit,
+                    onReply: (ChatItem) -> Unit, onCopy: (String) -> Unit) {
+    when (it) {
+        is ChatItem.User -> Replyable({ onReply(it) }, it.text, onCopy) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.End) {
+                Column(Modifier.widthIn(max = 280.dp).clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)).background(C.Clay.copy(alpha = 0.88f)).padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    it.quote?.let { q -> QuoteChip(q, onClay = true) }
+                    Text(it.text, fontSize = 14.sp, color = C.OnClay, lineHeight = 20.sp, style = androidx.compose.material3.LocalTextStyle.current.copy(shadow = null))
+                }
+            }
+        }
+        is ChatItem.Bot -> Replyable({ onReply(it) }, it.text, onCopy) {
+            Text(it.text, fontSize = 14.sp, color = C.Ink, lineHeight = 21.sp,
+                modifier = Modifier.padding(vertical = 4.dp).widthIn(max = 320.dp).clip(RoundedCornerShape(18.dp, 18.dp, 18.dp, 4.dp)).background(C.Card.copy(alpha = 0.7f)).padding(horizontal = 12.dp, vertical = 8.dp))
+        }
         is ChatItem.Info -> Text(it.text, fontSize = 12.sp, color = C.SageInk, lineHeight = 18.sp, modifier = Modifier.padding(vertical = 4.dp))
         is ChatItem.Error -> Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(14.dp)).background(C.ClayPale).padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             Text(it.text, fontSize = 13.sp, color = C.ClayDeep, lineHeight = 19.sp, modifier = Modifier.weight(1f))
             if (it.retry) Text(tr("重试"), fontSize = 13.sp, color = C.Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onRetry() }.padding(6.dp))
         }
-        is ChatItem.Card -> ConfirmCard(it, onConfirm, onCancel, onUndo)
+        is ChatItem.Card -> Replyable({ onReply(it) }, null, onCopy) { ConfirmCard(it, onConfirm, onCancel, onUndo) }
     }
 }
 
@@ -328,9 +487,9 @@ private fun ChatRow(it: ChatItem, onRetry: () -> Unit, onConfirm: (ChatItem.Card
 private fun ConfirmCard(card: ChatItem.Card, onConfirm: (ChatItem.Card) -> Unit, onCancel: (ChatItem.Card) -> Unit, onUndo: () -> Unit) {
     val st = card.st.value
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).liquidGlass(RoundedCornerShape(20.dp), tint = C.Clay, shadow = 0.dp).padding(14.dp)) {
-        Text(when (st) { ChatItem.APPLIED -> tr("已应用"); ChatItem.CANCELLED -> tr("已取消"); ChatItem.UNDONE -> tr("已撤销"); else -> tr("确认这些更改？") },
+        Text(when (st) { ChatItem.APPLIED -> tr("已确认"); ChatItem.CANCELLED -> tr("已取消"); ChatItem.UNDONE -> tr("已撤销"); else -> tr("确认这些更改？") },
             fontSize = 12.sp, color = if (st == ChatItem.PENDING) C.ClayDeep else C.Faint, fontWeight = FontWeight.SemiBold)
-        for (ch in card.plan.changes) {
+        for (ch in card.changes) {
             Text(ch.title, fontSize = 15.sp, color = C.Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
             for (l in ch.lines) Row(Modifier.padding(top = 3.dp)) {
                 Text(l.label, fontSize = 12.sp, color = C.Faint, modifier = Modifier.width(84.dp))
@@ -340,14 +499,13 @@ private fun ConfirmCard(card: ChatItem.Card, onConfirm: (ChatItem.Card) -> Unit,
                 }
             }
         }
-        val failed = card.plan.results.filter { !it.ok }
-        if (failed.isNotEmpty()) Text(tr("{0} 项没法执行，已跳过", failed.size), fontSize = 11.sp, color = C.Faint, modifier = Modifier.padding(top = 6.dp))
-        if (st == ChatItem.PENDING) Row(Modifier.padding(top = 12.dp)) {
+        if (card.failed > 0) Text(tr("{0} 项没法执行，已跳过", card.failed), fontSize = 11.sp, color = C.Faint, modifier = Modifier.padding(top = 6.dp))
+        if (st == ChatItem.PENDING && card.plan != null) Row(Modifier.padding(top = 12.dp)) {
             PrimaryButton(tr("确认"), Modifier.weight(1f)) { onConfirm(card) }
             Spacer(Modifier.width(10.dp))
             GhostButton(tr("取消"), Modifier.weight(0.6f)) { onCancel(card) }
         }
-        if (st == ChatItem.APPLIED && AiUndo.last.value != null && card === AiChat.items.lastOrNull { it is ChatItem.Card && it.st.value == ChatItem.APPLIED })
+        if (st == ChatItem.APPLIED && card.plan != null && AiUndo.last.value != null && card === AiChat.items.lastOrNull { it is ChatItem.Card && it.st.value == ChatItem.APPLIED })
             Text(tr("撤销"), fontSize = 13.sp, color = C.ClayDeep, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { onUndo() }.padding(6.dp))
     }
 }

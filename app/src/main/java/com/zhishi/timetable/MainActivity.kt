@@ -31,6 +31,8 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -93,7 +95,9 @@ class MainActivity : ComponentActivity() {
 
 /** 底部四个标签页；widget / about 是从「我的」点进去的二级页。settings 是「我的」的旧名字（测试脚本、教程还在用）。 */
 private val TABS = listOf("table", "todo", "calendar", "me")
-private val SCREENS = TABS + listOf("widget", "about", "settings", "ai_settings")
+private val SCREENS = TABS + listOf("widget", "about", "settings", "ai_settings", "ai_history", "ai_convo", "me_skin", "me_todo", "me_backup", "me_lang", "me_help")
+/** 二级页面返回到哪一页。 */
+private fun parentOf(s: String) = when (s) { "ai_convo" -> "ai_history"; else -> "me" }
 private fun norm(s: String?) = when (s) { "settings" -> "me"; in SCREENS -> s; else -> null }
 
 @Composable
@@ -111,8 +115,8 @@ fun App() {
             Nav.open.value = null
         }
     }
-    val sub = screen == "widget" || screen == "about" || screen == "ai_settings"
-    BackHandler(enabled = sub) { screen = "me" }
+    val sub = screen !in TABS
+    BackHandler(enabled = sub) { screen = parentOf(screen) }
     BackHandler(enabled = !sub && screen != "table") { screen = "table" }
     if (Updater.enabled()) UpdatePrompt()
     LaunchedEffect(Unit) { Tour.check(ctx) }
@@ -137,6 +141,13 @@ fun App() {
                     "widget" -> Paged({ screen = "me" }, tr("小部件")) { WidgetScreen() }
                     "about" -> Paged({ screen = "me" }, tr("关于")) { AboutScreen() }
                     "ai_settings" -> Paged({ screen = "me" }, tr("AI 设置")) { AiSettingsScreen() }
+                    "ai_history" -> Paged({ screen = "me" }, tr("AI 对话记录")) { AiHistoryScreen(onOpen = { Nav.sub = 0; screen = "ai_convo" }) }
+                    "ai_convo" -> AiConvoScreen(onBack = { screen = "ai_history" })
+                    "me_skin" -> Paged({ screen = "me" }, tr("皮肤")) { MeSkinScreen() }
+                    "me_todo" -> Paged({ screen = "me" }, tr("提醒与通知")) { MeTodoScreen() }
+                    "me_backup" -> Paged({ screen = "me" }, tr("备份与分享")) { MeBackupScreen() }
+                    "me_lang" -> Paged({ screen = "me" }, tr("语言")) { MeLangScreen() }
+                    "me_help" -> Paged({ screen = "me" }, tr("帮助与教程")) { MeHelpScreen() }
                 }
             }
         }
@@ -152,7 +163,7 @@ fun App() {
 }
 
 /**
- * 底部液态玻璃导航条：课表 / 待办 / 日历 / 我的。
+ * 底部液态玻璃导航条：课表 / 待办 / ✦ AI（正中间，打开 AI 面板）/ 日历 / 我的。
  * API 33+：整条是一块透镜，把后面的页面原样（不模糊）透出来，边缘折射、带色散和跟光走的亮边；
  * 选中的那个下面是一颗玻璃水滴，切换时弹簧滑过去，跑起来横向拉长、到位轻轻晃一下，按住时鼓起来变亮。
  * 更低的版本：老的半透明底 + 亮边 + 顶部水光。
@@ -162,9 +173,10 @@ private fun BottomBar(cur: String, m: Modifier, go: (String) -> Unit) {
     val items = listOf(
         Triple("table", tr("课表"), Icons.Filled.Home to Icons.Outlined.Home),
         Triple("todo", tr("待办"), Icons.Filled.CheckCircle to Icons.Outlined.CheckCircle),
+        // AI 入口在正中间：不是页面，点了打开 AI 面板
+        Triple("ai", tr("AI 助手"), Icons.Filled.Star to Icons.Outlined.Star),
         Triple("calendar", tr("日历"), Icons.Filled.DateRange to Icons.Outlined.DateRange),
         Triple("me", tr("我的"), Icons.Filled.AccountCircle to Icons.Outlined.AccountCircle),
-        Triple("ai", tr("AI"), Icons.Filled.Star to Icons.Outlined.Star),
     )
     val page = LocalGlassPage.current
     val lensOn = GlassLens.supported && !GlassLens.broken && page?.layer != null
@@ -206,17 +218,22 @@ private fun BottomBar(cur: String, m: Modifier, go: (String) -> Unit) {
             items.forEachIndexed { i, (id, label, icons) ->
                 val on = id == cur
                 val tint by animateColorAsState(if (on) sel else ink, label = "tab")
-                Column(Modifier.weight(1f).clip(CircleShape).clickable(interactionSource = sources[i], indication = null) { go(id) }.padding(vertical = 6.dp),
+                if (id == "ai") {
+                    // 正中间的 ✦：一颗淡淡染了皮肤主色的小玻璃圆，里面是主色的两颗星；不带文字，不抢眼
+                    Box(Modifier.weight(1f).clip(CircleShape).clickable(interactionSource = sources[i], indication = null) { go(id) }
+                        .semantics { contentDescription = label }.padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(46.dp).liquidGlass(CircleShape, tint = C.Clay, fill = if (dark) lerp(C.Card, C.Clay, 0.28f).copy(alpha = 0.55f) else lerp(Color.White, C.Clay, 0.16f).copy(alpha = 0.62f),
+                            shadow = 2.dp, press = press * (if (pressedStates[i].value) 1f else 0f)), contentAlignment = Alignment.Center) {
+                            SparkleIcon(textShadow.color.copy(alpha = 0.45f), true, Modifier.size(22.dp).offset(y = 1.dp))
+                            SparkleIcon(sel, true, Modifier.size(22.dp))
+                        }
+                    }
+                } else Column(Modifier.weight(1f).clip(CircleShape).clickable(interactionSource = sources[i], indication = null) { go(id) }.padding(vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Box {
-                        // 图标的柔和投影：同一个图标在下面错开 1px、用投影色画一遍；AI 入口画成两颗闪光的星
-                        if (id == "ai") {
-                            SparkleIcon(textShadow.color.copy(alpha = 0.5f), false, Modifier.size(24.dp).offset(y = 1.dp))
-                            SparkleIcon(tint, AiChat.open.value, Modifier.size(24.dp))
-                        } else {
-                            Icon(if (on) icons.first else icons.second, null, tint = textShadow.color.copy(alpha = 0.5f), modifier = Modifier.size(24.dp).offset(y = 1.dp))
-                            Icon(if (on) icons.first else icons.second, null, tint = tint, modifier = Modifier.size(24.dp))
-                        }
+                        // 图标的柔和投影：同一个图标在下面错开 1px、用投影色画一遍
+                        Icon(if (on) icons.first else icons.second, null, tint = textShadow.color.copy(alpha = 0.5f), modifier = Modifier.size(24.dp).offset(y = 1.dp))
+                        Icon(if (on) icons.first else icons.second, null, tint = tint, modifier = Modifier.size(24.dp))
                     }
                     Text(label, fontSize = 11.sp, color = tint, fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1,
                         style = LocalTextStyle.current.copy(shadow = textShadow), modifier = Modifier.padding(top = 2.dp))

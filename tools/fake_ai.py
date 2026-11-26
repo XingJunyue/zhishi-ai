@@ -2,6 +2,7 @@
 """冒烟测试用的假 OpenAI 兼容接口（不是真的模型）：只认 /v1/models 和 /v1/chat/completions。
 - 带图片的请求 → 固定的课表 JSON（含周次、单双周）
 - 最后一条是工具结果 → 一句文字
+- 带引用（「[用户在回复这条消息…」开头）→ 回一句带着引用原文的话
 - 用户说「机器学习」→ add_course；「待办」→ add_todo；「皮肤」→ set_skin；「删」→ delete_course；其他 → 回答周二的课
 用法：fake_ai.py 端口"""
 import json, sys
@@ -49,6 +50,11 @@ class H(BaseHTTPRequestHandler):
         if last.get("role") == "tool": return self.send(200, reply({"role": "assistant", "content": "好的。"}))
         text = last.get("content") if isinstance(last.get("content"), str) else ""
         if body.get("tools") is None: return self.send(200, reply({"role": "assistant", "content": "OK"}))
+        # 回复某一条（引用）：回一句带着引用原文的话，冒烟测试据此确认引用真的发给了模型
+        if text.startswith("[用户在回复这条消息") or text.startswith("[The user is replying"):
+            q = text[text.find("「") + 1:text.find("」")] if "「" in text else text.split('"')[1]
+            who = "你自己之前说的" if "用户自己之前发的" in text or "their own" in text else "我之前的回复"
+            return self.send(200, reply({"role": "assistant", "content": "收到，你在回复" + who + "：「" + q[:30] + "」。" + text.split("\n", 1)[-1][:20]}))
         if "机器学习" in text: return self.send(200, call("add_course", {"name": "机器学习", "weekdays": [3], "start_period": 5, "end_period": 6, "room": "B302", "teacher": "王老师", "weeks": "1-16"}))
         if "待办" in text: return self.send(200, call("add_todo", {"title": "交线代作业", "due": "2030-01-02 22:00", "remind": True, "remind_before_minutes": 30}))
         if "皮肤" in text: return self.send(200, call("set_skin", {"skin": "yehang", "mode": "dark"}))
