@@ -114,8 +114,8 @@ private fun MeRow(t: String, icon: @Composable () -> Unit, value: String? = null
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { onClick() }.padding(start = 12.dp, end = 12.dp, top = 11.dp, bottom = 11.dp),
             verticalAlignment = Alignment.CenterVertically) {
             icon()
-            Text(t, fontSize = 15.sp, color = C.Ink, fontWeight = FontWeight.Medium, maxLines = 1, modifier = Modifier.padding(start = 14.dp))
-            Spacer(Modifier.weight(1f).widthIn(min = 8.dp))
+            Text(t, fontSize = 15.sp, color = C.Ink, fontWeight = FontWeight.Medium, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 14.dp).weight(1f))
             if (value != null) Text(value, fontSize = 13.sp, color = if (warm) C.ClayDeep else C.Faint, maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(start = 8.dp).widthIn(max = 170.dp))
             Text("›", fontSize = 20.sp, color = C.Faint, modifier = Modifier.padding(start = 8.dp))

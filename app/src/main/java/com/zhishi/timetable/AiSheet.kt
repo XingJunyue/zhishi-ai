@@ -425,7 +425,7 @@ private fun QuoteChip(q: AiQuote, onClay: Boolean) {
  * 能回复的一条消息：长按出「回复 / 复制」，往右滑过一段距离松手也是回复（滑的时候左边露出 ↩）。
  */
 @Composable
-private fun Replyable(onReply: () -> Unit, copyText: String?, onCopy: (String) -> Unit, content: @Composable () -> Unit) {
+private fun Replyable(onReply: () -> Unit, copyText: String?, onCopy: (String) -> Unit, alignEnd: Boolean = false, content: @Composable () -> Unit) {
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -448,9 +448,12 @@ private fun Replyable(onReply: () -> Unit, copyText: String?, onCopy: (String) -
             })
             .pointerInput(Unit) { detectTapGestures(onLongPress = { haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress); menu = true }) }) {
             content()
-            androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
-                androidx.compose.material3.DropdownMenuItem(text = { Text(tr("回复"), fontSize = 14.sp, color = C.Ink) }, onClick = { menu = false; reply.value() })
-                if (copyText != null) androidx.compose.material3.DropdownMenuItem(text = { Text(tr("复制"), fontSize = 14.sp, color = C.Ink) }, onClick = { menu = false; onCopy(copyText) })
+            // 菜单贴着这条消息那一侧弹出（自己的话在右边，AI 的在左边）
+            Box(Modifier.align(if (alignEnd) Alignment.BottomEnd else Alignment.BottomStart)) {
+                androidx.compose.material3.DropdownMenu(menu, { menu = false }) {
+                    androidx.compose.material3.DropdownMenuItem(text = { Text(tr("回复"), fontSize = 14.sp, color = C.Ink) }, onClick = { menu = false; reply.value() })
+                    if (copyText != null) androidx.compose.material3.DropdownMenuItem(text = { Text(tr("复制"), fontSize = 14.sp, color = C.Ink) }, onClick = { menu = false; onCopy(copyText) })
+                }
             }
         }
     }
@@ -460,7 +463,7 @@ private fun Replyable(onReply: () -> Unit, copyText: String?, onCopy: (String) -
 private fun ChatRow(it: ChatItem, onRetry: () -> Unit, onConfirm: (ChatItem.Card) -> Unit, onCancel: (ChatItem.Card) -> Unit, onUndo: () -> Unit,
                     onReply: (ChatItem) -> Unit, onCopy: (String) -> Unit) {
     when (it) {
-        is ChatItem.User -> Replyable({ onReply(it) }, it.text, onCopy) {
+        is ChatItem.User -> Replyable({ onReply(it) }, it.text, onCopy, alignEnd = true) {
             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.End) {
                 Column(Modifier.widthIn(max = 280.dp).clip(RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp)).background(C.Clay.copy(alpha = 0.88f)).padding(horizontal = 12.dp, vertical = 8.dp)) {
                     it.quote?.let { q -> QuoteChip(q, onClay = true) }

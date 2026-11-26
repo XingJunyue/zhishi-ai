@@ -99,6 +99,7 @@ for mode in 1 2; do
     go widget; shot "09-widget-$tag" 3
   done
   go me_skin; shot "09-picker-$mode" 3
+  go me; shot "09-me-$mode" 3
   go todo; shot "09-todo-$mode" 3
   go calendar; shot "09-calendar-$mode" 3
 done
