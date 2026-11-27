@@ -16,7 +16,7 @@ import org.json.JSONObject
 data class AiQuote(val fromUser: Boolean, val text: String)
 
 /** 存下来的确认卡片：只有给人看的改动和最后的状态。 */
-data class SavedCard(val changes: List<AiChange>, val failed: Int, val state: Int)
+data class SavedCard(val changes: List<AiChange>, val failed: Int, val state: Int, val undone: Set<Int> = emptySet())
 
 /** 对话里的一项（存储用）。 */
 data class SavedItem(val kind: String, val text: String = "", val quote: AiQuote? = null, val images: Int = 0, val card: SavedCard? = null, val retry: Boolean = false)
@@ -31,6 +31,8 @@ object AiConvos {
     const val USER = "user"; const val BOT = "bot"; const val CARD = "card"; const val ERROR = "error"; const val INFO = "info"
     /** 卡片状态（和界面 ChatItem 的一样）。 */
     const val PENDING = 0; const val APPLIED = 1; const val CANCELLED = 2; const val UNDONE = 3
+    /** 撤销了其中几项（undone 记着是哪几项）。2026-11 起 AI 的改动马上生效，卡片一开始就是 APPLIED；PENDING / CANCELLED 只出现在老对话里。 */
+    const val PARTIAL = 4
     /** 最多存多少段对话、每段多少条、模型历史多少条。 */
     const val MAX = 60; const val MAX_ITEMS = 400; const val MAX_HISTORY = 80
     /** 引用里最多带多少字给模型。 */
@@ -99,6 +101,7 @@ object AiConvos {
         if (i.images > 0) j.put("im", i.images)
         if (i.retry) j.put("r", true)
         i.card?.let { c ->
+            if (c.undone.isNotEmpty()) j.put("ud", JSONArray(c.undone.sorted()))
             j.put("st", c.state).put("f", c.failed).put("ch", JSONArray().also { a -> c.changes.forEach { ch ->
                 a.put(JSONObject().put("t", ch.title).put("l", JSONArray().also { la -> ch.lines.forEach { l ->
                     la.put(JSONObject().put("n", l.label).also { o -> l.before?.let { o.put("b", it) }; l.after?.let { o.put("a", it) } }) } }))
@@ -114,7 +117,7 @@ object AiConvos {
                 val la = o.optJSONArray("l") ?: JSONArray()
                 AiChange(o.optString("t"), (0 until la.length()).mapNotNull { la.optJSONObject(it) }.map { l ->
                     DiffLine(l.optString("n"), if (l.has("b")) l.optString("b") else null, if (l.has("a")) l.optString("a") else null) })
-            }, j.optInt("f"), j.optInt("st"))
+            }, j.optInt("f"), j.optInt("st"), j.optJSONArray("ud")?.let { a -> (0 until a.length()).map { a.optInt(it) }.toSet() } ?: emptySet())
         } else null
         return SavedItem(k, j.optString("t"), quoteOf(j.optJSONObject("q")), j.optInt("im"), card, j.optBoolean("r"))
     }

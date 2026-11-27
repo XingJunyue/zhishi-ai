@@ -80,7 +80,9 @@ data class AiChange(val title: String, val lines: List<DiffLine>)
 data class AiToolResult(val callId: String, val name: String, val ok: Boolean, val message: String)
 
 /** 一批提议：前后状态、给人看的改动、每个工具的结果、要打开的页面。 */
-class AiPlan(val before: AppState, val after: AppState, val changes: List<AiChange>, val results: List<AiToolResult>, val nav: String?) {
+class AiPlan(val before: AppState, val after: AppState, val changes: List<AiChange>, val results: List<AiToolResult>, val nav: String?,
+             /** 每项改动动过的东西（改之前 / 之后），撤销列表和依赖用。 */
+             val edits: List<AiEdit> = emptyList()) {
     val hasChanges get() = changes.isNotEmpty() && AiState.changed(before, after).isNotEmpty()
 }
 
@@ -294,6 +296,25 @@ object AiTools {
         cmp(tr("完成"), if (a.done) tr("是") else tr("否"), if (b.done) tr("是") else tr("否"))
         cmp(tr("置顶"), if (a.pin) tr("是") else tr("否"), if (b.pin) tr("是") else tr("否"))
         return out
+    }
+
+    /**
+     * 一样东西从 a 变成 b（智能体改的、撤销列表里用）：标题 + 前后对比。a / b 是 Slot / Todo，null = 不存在。
+     * who = 谁改的（智能体名字），拼进标题前面。
+     */
+    fun describe(s: AppState, a: Any?, b: Any?, tz: TimeZone): AiChange = when {
+        a is Slot? && b is Slot? && (a != null || b != null) -> when {
+            a == null -> AiChange(tr("新增课程：{0}", b!!.name), courseLines(s, b))
+            b == null -> AiChange(tr("删除课程：{0}", a.name), courseLines(s, a).map { DiffLine(it.label, it.after, null) })
+            else -> AiChange(tr("修改课程：{0}", a.name), courseDiff(s, a, b))
+        }
+        a is Todo? && b is Todo? && (a != null || b != null) -> when {
+            a == null -> AiChange(tr("新增待办：{0}", b!!.title), listOfNotNull(DiffLine(tr("截止"), null, dueTxt(b, tz)), if (b.remind) DiffLine(tr("提醒"), null, remindTxt(b)) else null,
+                b.course.takeIf { it.isNotBlank() }?.let { DiffLine(tr("关联课程"), null, it) }, b.note.takeIf { it.isNotBlank() }?.let { DiffLine(tr("备注"), null, it) }))
+            b == null -> AiChange(tr("删除待办：{0}", a.title), listOf(DiffLine(tr("截止"), dueTxt(a, tz), null)))
+            else -> AiChange((when { a.done != b.done -> if (b.done) tr("完成待办：{0}") else tr("恢复待办：{0}"); a.pin != b.pin -> if (b.pin) tr("置顶待办：{0}") else tr("取消置顶：{0}"); else -> tr("修改待办：{0}") }).replace("{0}", a.title), todoDiff(a, b, tz))
+        }
+        else -> AiChange(tr("学期设置"), emptyList())
     }
 
     // ---------- 查找 ----------
@@ -550,6 +571,7 @@ object AiTools {
     /** 把模型的一组工具调用依次算到状态上（后一个看得到前一个的结果）。出错的那个跳过并把原因回给模型。 */
     fun plan(state: AppState, calls: List<AiToolCall>, env: AiEnv): AiPlan {
         var s = state; val changes = ArrayList<AiChange>(); val results = ArrayList<AiToolResult>(); var nav: String? = null
+        val edits = ArrayList<AiEdit>()
         for (c in calls) {
             val args = try { Args(JSONObject(repairJson(c.arguments).ifBlank { "{}" })) } catch (x: Exception) { results += AiToolResult(c.id, c.name, false, "error: arguments are not valid JSON"); continue }
             if (c.name == OPEN_PAGE) {
@@ -561,12 +583,13 @@ object AiTools {
             }
             try {
                 val st = run(s, c.name, args, env)
-                s = st.s; st.change?.let { changes += it }
-                results += AiToolResult(c.id, c.name, true, "proposed (waiting for the user to confirm): " + st.msg)
+                st.change?.let { ch -> changes += ch; Entities.edit(ch, s, st.s).takeIf { it.keys.isNotEmpty() }?.let { edits += it } }
+                s = st.s
+                results += AiToolResult(c.id, c.name, true, st.msg)
             } catch (e: ToolError) { results += AiToolResult(c.id, c.name, false, "error: " + e.message) }
             catch (e: Exception) { results += AiToolResult(c.id, c.name, false, "error: " + (e.message ?: e.javaClass.simpleName)) }
         }
-        return AiPlan(state, s, changes, results, nav)
+        return AiPlan(state, s, changes, results, nav, edits)
     }
 
     /** 常见的坏 JSON 小修：去掉 ``` 围栏、末尾多余的逗号、中文引号。 */

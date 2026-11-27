@@ -160,25 +160,30 @@ object AiStateIO {
     }
 }
 
-/** 最后应用的一批（撤销用，进程内）。 */
+/** AI 的改动：马上写进存储（从当前真实状态出发，只动这批改过的东西），一轮结束后变成一批可以自定义撤回的 UndoBatch。 */
 object AiUndo {
-    val last = mutableStateOf<AiBatch?>(null)
-    /** 应用一批提议：从当前真实状态出发重新取改动的块（中间用户手动改过的别的块不受影响）。 */
-    fun apply(c: Context, plan: AiPlan): AiBatch {
+    /** 写一批（主线程）：返回写完以后的状态。 */
+    fun applyNow(c: Context, plan: AiPlan): AppState {
         val cur = AiStateIO.read(c)
-        val parts = AiState.changed(plan.before, plan.after)
-        val target = AiState.take(cur, plan.after, parts)
+        val target = Entities.applyOn(cur, plan.edits, plan.before)
         AiStateIO.write(c, cur, target)
-        return AiBatch(cur, target).also { last.value = it }
+        return AiStateIO.read(c)
     }
-    /** 撤销；返回没能撤销的块数（之后又被改过的）。 */
-    fun undo(c: Context): Int {
-        val b = last.value ?: return 0
-        val cur = AiStateIO.read(c)
-        val (n, conflicts) = b.undo(cur)
-        AiStateIO.write(c, cur, n)
-        last.value = null
-        return conflicts.size
+
+    /** 一轮的全部改动 → 一批（撤销：Entities.undo，主线程写存储；之后又被改过的东西不动）。before = 这一轮开始前的状态（删掉的按原位置放回）。 */
+    fun batch(edits: List<AiEdit>, before: AppState): UndoBatch {
+        val expected = Entities.finalValues(edits)
+        val entries = edits.map { UndoEntry(it.change, it.keys) }
+        lateinit var b: UndoBatch
+        b = UndoBatch(tr("已改好 {0} 处", edits.size), entries, UndoBatch.AI, edits) { c, sel ->
+            CloudSync.onMain {
+                val cur = AiStateIO.read(c)
+                val r = Entities.undo(edits, b.undone.value, sel, cur, before, expected)
+                AiStateIO.write(c, cur, r.state)
+                UndoResult(r.done, r.conflicts.size)
+            }
+        }
+        return b
     }
 }
 

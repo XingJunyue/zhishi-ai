@@ -77,7 +77,7 @@ class AiHistoryTest {
         val m = AiAgentTest.Scripted("周三是机器学习，在 B303。")
         val a = AiAgent(m)
         a.restore(history.take(2))   // 存的时候卡片还没确认
-        assertFalse(a.hasPending)
+
         val env = AiEnv(1_790_000_000_000L, TimeZone.getTimeZone("Asia/Shanghai"), listOf("chunyu" to "春雨"), { "n_$it" })
         val st = AppState(courses = listOf(Slot("c1", "高等数学", setOf(1), 480, 580)), secStarts = listOf(480), secEnds = listOf(525))
         val steps = a.send("周三有什么课", st, env, "zh")

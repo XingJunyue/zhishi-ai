@@ -57,21 +57,26 @@ sealed class ChatItem {
     /** quote = 这句话在回复哪一条。 */
     class User(val text: String, val images: Int = 0, val quote: AiQuote? = null) : ChatItem()
     class Bot(val text: String) : ChatItem()
-    /** plan = null：从对话记录里读回来的卡片，只显示最后的状态，不能再应用。 */
-    class Card(val plan: AiPlan?, val changes: List<AiChange>, val failed: Int, initial: Int = PENDING) : ChatItem() {
-        constructor(plan: AiPlan) : this(plan, plan.changes, plan.results.count { !it.ok })
+    /**
+     * 改好了的一批（AI 的改动马上生效）：每项改动的前后对比；batch = 这一批的撤销（进程内），
+     * null = 从对话记录里读回来的，只显示最后的状态（已改好 / 部分撤销 / 已撤销；老对话里还有已取消），不能再撤销。
+     */
+    class Card(val batch: UndoBatch?, val changes: List<AiChange>, val failed: Int, initial: Int = APPLIED, private val undone0: Set<Int> = emptySet()) : ChatItem() {
+        constructor(batch: UndoBatch, failed: Int) : this(batch, batch.entries.map { it.change }, failed)
         val st = mutableStateOf(initial)
+        fun undone(): Set<Int> = batch?.undone?.value ?: undone0
+        fun state(): Int = if (batch == null && st.value != APPLIED) st.value else undone().size.let { n -> when { n == 0 -> APPLIED; n >= changes.size -> UNDONE; else -> PARTIAL } }
     }
     class Error(val text: String, val retry: Boolean) : ChatItem()
     class Info(val text: String) : ChatItem()
     companion object {
-        const val PENDING = AiConvos.PENDING; const val APPLIED = AiConvos.APPLIED; const val CANCELLED = AiConvos.CANCELLED; const val UNDONE = AiConvos.UNDONE
+        const val PENDING = AiConvos.PENDING; const val APPLIED = AiConvos.APPLIED; const val CANCELLED = AiConvos.CANCELLED; const val UNDONE = AiConvos.UNDONE; const val PARTIAL = AiConvos.PARTIAL
         private val SEQ = java.util.concurrent.atomic.AtomicLong()
         /** 存储用的样子。 */
         fun saved(i: ChatItem): SavedItem = when (i) {
             is User -> SavedItem(AiConvos.USER, i.text, i.quote, i.images)
             is Bot -> SavedItem(AiConvos.BOT, i.text)
-            is Card -> SavedItem(AiConvos.CARD, card = SavedCard(i.changes, i.failed, i.st.value))
+            is Card -> SavedItem(AiConvos.CARD, card = SavedCard(i.changes, i.failed, i.state(), i.undone()))
             is Error -> SavedItem(AiConvos.ERROR, i.text, retry = i.retry)
             is Info -> SavedItem(AiConvos.INFO, i.text)
         }
@@ -79,7 +84,7 @@ sealed class ChatItem {
         fun restored(s: SavedItem): ChatItem = when (s.kind) {
             AiConvos.USER -> User(s.text, s.images, s.quote)
             AiConvos.BOT -> Bot(s.text)
-            AiConvos.CARD -> Card(null, s.card?.changes ?: emptyList(), s.card?.failed ?: 0, AiConvos.restoredState(s.card?.state ?: CANCELLED))
+            AiConvos.CARD -> Card(null, s.card?.changes ?: emptyList(), s.card?.failed ?: 0, AiConvos.restoredState(s.card?.state ?: CANCELLED), s.card?.undone ?: emptySet())
             AiConvos.ERROR -> Error(s.text, false)
             else -> Info(s.text)
         }
@@ -94,8 +99,12 @@ object AiChat {
     val items = mutableStateListOf<ChatItem>()
     val busy = mutableStateOf<String?>(null)
     val toast = mutableStateOf<String?>(null)
-    /** 提示条上带不带「撤销」。 */
+    /** 提示条上带不带「撤销」（点了打开最后一批的撤销列表）。 */
     val toastUndo = mutableStateOf(false)
+    /** 最后改好的一批（提示条上的「撤销」）。 */
+    val lastBatch = mutableStateOf<UndoBatch?>(null)
+    /** 刚加了带提醒的待办：界面去申请通知权限。 */
+    val wantNotify = mutableStateOf(0)
     /** 测试钩子：打开后要展开到多高（"full" / "half"）。 */
     val wantFull = mutableStateOf(false)
     /** 等着导入预览的识别结果。 */
@@ -108,7 +117,7 @@ object AiChat {
     private fun newId() = "c" + System.currentTimeMillis().toString(36) + (100..999).random()
     private var agent: AiAgent? = null
     fun agent(c: android.content.Context): AiAgent = (agent ?: AiAgent(Ai.client(c)).also { agent = it }).also { it.client = Ai.client(c) }
-    fun reset() { items.clear(); agent?.reset(); toast.value = null; replyTo.value = null; convoId = newId(); created = 0L }
+    fun reset() { items.clear(); agent?.reset(); toast.value = null; replyTo.value = null; lastBatch.value = null; convoId = newId(); created = 0L }
     fun show(tab: String) { from.value = tab; open.value = true }
 
     /** 引用某一条：用户 / AI 的话、确认卡片（改动标题）。出错和提示不能引用。 */
@@ -133,12 +142,11 @@ object AiChat {
         if (id == convoId && items.isNotEmpty()) return true
         if (busy.value != null) return false
         val cv = AiChatStore.get(c, id) ?: return false
-        cancelPending(c)
         persist(c)
         items.clear(); items.addAll(cv.items.map { ChatItem.restored(it) })
         agent(c).restore(cv.history)
         convoId = cv.id; created = cv.created
-        toast.value = null; toastUndo.value = false; replyTo.value = null
+        toast.value = null; toastUndo.value = false; replyTo.value = null; lastBatch.value = null
         return true
     }
     /** 对话记录里删掉了正在进行的这段：界面上也清空。 */
@@ -149,56 +157,62 @@ object AiChat {
         val t = text.trim(); if (t.isEmpty() || busy.value != null) return
         val q = replyTo.value?.let { quoteOf(it) }
         replyTo.value = null
-        cancelPending(c)
         items += ChatItem.User(t, quote = q)
         val content = AiConvos.quoteContext(t, q, Tr.lang)
-        run(c) { a, st -> a.send(content, st, aiEnv(), Tr.lang) }
+        run(c) { a, st, ap -> a.send(content, st, aiEnv(), Tr.lang, ap) }
     }
     suspend fun retry(c: android.content.Context) {
         if (busy.value != null) return
         items.removeAll { it is ChatItem.Error }
-        run(c) { a, st -> a.retry(st, aiEnv(), Tr.lang) }
+        run(c) { a, st, ap -> a.retry(st, aiEnv(), Tr.lang, ap) }
     }
-    private suspend fun run(c: android.content.Context, f: (AiAgent, AppState) -> List<AiAgent.Step>) {
+    /**
+     * 跑一轮：模型调的工具马上写进存储（主线程，从当前真实状态出发、只动这批改过的东西），
+     * 一轮结束后所有改动合成一批：对话里一张「已改好 N 处」卡片 + 提示条「已改好 N 处 · 撤销」（点开是自定义撤回列表）。
+     */
+    private suspend fun run(c: android.content.Context, f: (AiAgent, AppState, (AiPlan) -> AppState?) -> List<AiAgent.Step>) {
         if (!Ai.ready(c)) { items += ChatItem.Error(aiErrorText(AiError.NotConfigured("all")), false); persist(c); return }
         busy.value = tr("正在想…")
         val a = agent(c)
-        val steps = withContext(Dispatchers.IO) { try { f(a, AiStateIO.read(c)) } catch (e: Throwable) { listOf(AiAgent.Step.Failed(e)) } }
+        val apply: (AiPlan) -> AppState? = { plan -> try { CloudSync.onMain { AiUndo.applyNow(c, plan) } } catch (e: Throwable) { android.util.Log.w("ZhishiAi", "apply failed", e); null } }
+        val (before, steps) = withContext(Dispatchers.IO) {
+            val st = AiStateIO.read(c)
+            st to (try { f(a, st, apply) } catch (e: Throwable) { listOf(AiAgent.Step.Failed(e)) })
+        }
         busy.value = null
         for (s in steps) when (s) {
             is AiAgent.Step.Text -> items += ChatItem.Bot(plain(s.text))
-            is AiAgent.Step.Pending -> { s.text?.let { items += ChatItem.Bot(plain(it)) }; items += ChatItem.Card(s.plan) }
+            is AiAgent.Step.Applied -> {
+                val b = AiUndo.batch(s.edits, before)
+                items += ChatItem.Card(b, s.failed)
+                lastBatch.value = b
+                toast.value = b.title; toastUndo.value = true
+                if (s.edits.any { e -> e.after.values.any { it is Todo && it.remind && !it.done } }) wantNotify.value++
+            }
             is AiAgent.Step.Nav -> { Nav.open.value = s.dest; open.value = false }
             is AiAgent.Step.Failed -> items += ChatItem.Error(aiErrorText(s.error), true)
         }
         persist(c)
     }
-    /** 有没确认的卡片：用户直接发了新消息，就当取消。 */
-    private fun cancelPending(c: android.content.Context) {
-        for (i in items) if (i is ChatItem.Card && i.st.value == ChatItem.PENDING) i.st.value = ChatItem.CANCELLED
-        agent?.let { if (it.hasPending) it.resolve(false, null) }
+
+    /** 打开撤销列表：card = 哪一批（默认最后一批）。 */
+    fun undo(c: android.content.Context, b: UndoBatch? = lastBatch.value, pre: Set<Int>? = null) {
+        b ?: return
+        hookUndo(c)
+        UndoCenter.open(b, pre)
     }
-    fun confirm(c: android.content.Context, card: ChatItem.Card): Boolean {
-        val plan = card.plan ?: return false
-        if (card.st.value != ChatItem.PENDING) return false
-        val ok = try { AiUndo.apply(c, plan); true } catch (e: Throwable) { android.util.Log.w("ZhishiAi", "apply failed", e); false }
-        agent(c).resolve(ok, if (ok) null else "saving failed on the device")
-        card.st.value = if (ok) ChatItem.APPLIED else ChatItem.CANCELLED
-        toast.value = if (ok) tr("已应用 {0} 项更改", plan.changes.size) else tr("保存失败"); toastUndo.value = ok
-        persist(c)
-        return ok
-    }
-    fun cancel(c: android.content.Context, card: ChatItem.Card) {
-        if (card.plan == null || card.st.value != ChatItem.PENDING) return
-        card.st.value = ChatItem.CANCELLED; agent(c).resolve(false, null); persist(c)
-    }
-    fun undo(c: android.content.Context) {
-        val conflicts = try { AiUndo.undo(c) } catch (e: Throwable) { -1 }
-        for (i in items) if (i is ChatItem.Card && i.plan != null && i.st.value == ChatItem.APPLIED) i.st.value = ChatItem.UNDONE
-        agent?.noteUndo()
-        toastUndo.value = false
-        toast.value = when { conflicts < 0 -> tr("撤销失败"); conflicts > 0 -> tr("已撤销；有 {0} 处在那之后又改过，没动", conflicts); else -> tr("已撤销") }
-        persist(c)
+
+    /** 撤销完了：告诉模型撤销了哪几项、更新卡片和提示条、存对话。 */
+    fun hookUndo(c: android.content.Context) {
+        val ctx = c.applicationContext ?: c
+        UndoCenter.after = { b, r ->
+            if (b.kind == UndoBatch.AI && r.done.isNotEmpty() && items.any { it is ChatItem.Card && it.batch === b }) {
+                agent?.noteUndo(r.done.sorted().map { b.entries[it].change.title })
+                toastUndo.value = b.left > 0
+                toast.value = UndoCenter.msg.value
+                persist(ctx)
+            }
+        }
     }
     /** 回复里的 Markdown 粗体、标题符号去掉（界面是纯文字）。 */
     fun plain(t: String) = t.replace("**", "").replace(Regex("(?m)^#{1,6}\\s*"), "").trim()
@@ -322,7 +336,9 @@ fun AiChatBody(modifier: Modifier, inSheet: Boolean = true) {
     fun attach() = pick.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     // 撤销条出现 / 消失时列表变矮 / 变高：重新滚到底，免得最后一张卡片的底部（撤销）被截掉
     LaunchedEffect(items.size, AiChat.busy.value, AiChat.toast.value != null) { if (items.isNotEmpty()) { delay(50); list.animateScrollToItem(items.size) } }
-    LaunchedEffect(AiChat.toast.value) { if (AiChat.toast.value != null) { delay(6000); AiChat.toast.value = null } }
+    LaunchedEffect(AiChat.toast.value) { if (AiChat.toast.value != null) { delay(if (AiChat.toastUndo.value) 10000 else 6000); AiChat.toast.value = null } }
+    // AI 加了带提醒的待办：第一次申请通知权限
+    LaunchedEffect(AiChat.wantNotify.value) { if (AiChat.wantNotify.value > 0 && Build.VERSION.SDK_INT >= 33 && !TodoAlarm.canNotify(c)) perm.launch(Manifest.permission.POST_NOTIFICATIONS) }
     // 语音输入：识别出来的字实时接在原来的字后面（不自动发送）；上滑取消就还原
     val vActive = Voice.active
     LaunchedEffect(Voice.live.value, vActive) { if (vActive) input = VoiceFlow.merge(Voice.prefix, Voice.live.value) }
@@ -339,10 +355,7 @@ fun AiChatBody(modifier: Modifier, inSheet: Boolean = true) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
             if (items.isEmpty()) item { Welcome(ready, onChip = { t, send -> if (send) scope.launch { AiChat.say(c, t) } else input = t }, onShot = { attach() }) }
             items(items, key = { it.key }) { it0 -> ChatRow(it0, onRetry = { scope.launch { AiChat.retry(c) } },
-                onConfirm = { card ->
-                    if (AiChat.confirm(c, card) && Build.VERSION.SDK_INT >= 33 && card.plan?.after?.todos?.any { it.remind && !it.done } == true && !TodoAlarm.canNotify(c))
-                        perm.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }, onCancel = { AiChat.cancel(c, it) }, onUndo = { AiChat.undo(c) }, onReply = reply, onCopy = copy) }
+                onUndo = { card -> AiChat.undo(c, card.batch) }, onReply = reply, onCopy = copy) }
             AiChat.busy.value?.let { b -> item { Row(Modifier.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(14.dp), color = C.Clay, strokeWidth = 2.dp); Text("  $b", fontSize = 13.sp, color = C.Soft) } } }
         }
@@ -351,7 +364,7 @@ fun AiChatBody(modifier: Modifier, inSheet: Boolean = true) {
             Row(Modifier.padding(horizontal = 16.dp, vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(C.Ink.copy(alpha = 0.86f)).padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 Text(t, fontSize = 13.sp, color = C.Cream, modifier = Modifier.weight(1f), style = androidx.compose.material3.LocalTextStyle.current.copy(shadow = null))
-                if (AiUndo.last.value != null && AiChat.toastUndo.value)
+                if (AiChat.lastBatch.value != null && AiChat.toastUndo.value)
                     Text(tr("撤销"), fontSize = 13.sp, color = C.ClayPale, fontWeight = FontWeight.Bold, style = androidx.compose.material3.LocalTextStyle.current.copy(shadow = null),
                         modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { AiChat.undo(c) }.padding(horizontal = 8.dp, vertical = 4.dp))
             }
@@ -381,7 +394,7 @@ fun AiChatBody(modifier: Modifier, inSheet: Boolean = true) {
 @Composable
 private fun Welcome(ready: Boolean, onChip: (String, Boolean) -> Unit, onShot: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
-        Text(tr("我可以帮你改课表、记待办、换皮肤和调设置，也能回答课表上的问题。每次改动都会先给你看前后对比，点「确认」才生效。"),
+        Text(tr("我可以帮你改课表、记待办、换皮肤和调设置，也能回答课表上的问题。改动马上生效，改完会列出改了什么，可以全部或只撤销其中几项。"),
             fontSize = 13.sp, color = C.Soft, lineHeight = 20.sp)
         if (!ready) Note(tr("还没设置 AI 接口：点右上角「设置」，填好接口地址、API Key 和模型。"), warm = true)
         val todo = AiChat.from.value == "todo"
@@ -470,7 +483,7 @@ private fun Replyable(onReply: () -> Unit, copyText: String?, onCopy: (String) -
 }
 
 @Composable
-private fun ChatRow(it: ChatItem, onRetry: () -> Unit, onConfirm: (ChatItem.Card) -> Unit, onCancel: (ChatItem.Card) -> Unit, onUndo: () -> Unit,
+private fun ChatRow(it: ChatItem, onRetry: () -> Unit, onUndo: (ChatItem.Card) -> Unit,
                     onReply: (ChatItem) -> Unit, onCopy: (String) -> Unit) {
     when (it) {
         is ChatItem.User -> Replyable({ onReply(it) }, it.text, onCopy, alignEnd = true) {
@@ -491,35 +504,35 @@ private fun ChatRow(it: ChatItem, onRetry: () -> Unit, onConfirm: (ChatItem.Card
             Text(it.text, fontSize = 13.sp, color = C.ClayDeep, lineHeight = 19.sp, modifier = Modifier.weight(1f))
             if (it.retry) Text(tr("重试"), fontSize = 13.sp, color = C.Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onRetry() }.padding(6.dp))
         }
-        is ChatItem.Card -> Replyable({ onReply(it) }, null, onCopy) { ConfirmCard(it, onConfirm, onCancel, onUndo) }
+        is ChatItem.Card -> Replyable({ onReply(it) }, null, onCopy) { ChangesCard(it, onUndo) }
     }
 }
 
-/** 确认卡片：每项改动的前后对比（旧值划掉、新值加粗），确认 / 取消；应用后可撤销最后一批。 */
+/** 改好了的一批：每项改动的前后对比（旧值划掉、新值加粗）；撤销过的那项整项划掉；还在这次进程里的可以点「撤销…」自定义撤回。 */
 @Composable
-private fun ConfirmCard(card: ChatItem.Card, onConfirm: (ChatItem.Card) -> Unit, onCancel: (ChatItem.Card) -> Unit, onUndo: () -> Unit) {
-    val st = card.st.value
+private fun ChangesCard(card: ChatItem.Card, onUndo: (ChatItem.Card) -> Unit) {
+    val st = card.state()
+    val undone = card.undone()
     Column(Modifier.fillMaxWidth().padding(vertical = 6.dp).liquidGlass(RoundedCornerShape(20.dp), tint = C.Clay, shadow = 0.dp).padding(14.dp)) {
-        Text(when (st) { ChatItem.APPLIED -> tr("已确认"); ChatItem.CANCELLED -> tr("已取消"); ChatItem.UNDONE -> tr("已撤销"); else -> tr("确认这些更改？") },
-            fontSize = 12.sp, color = if (st == ChatItem.PENDING) C.ClayDeep else C.Faint, fontWeight = FontWeight.SemiBold)
-        for (ch in card.changes) {
-            Text(ch.title, fontSize = 15.sp, color = C.Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp))
-            for (l in ch.lines) Row(Modifier.padding(top = 3.dp)) {
+        Text(when (st) {
+            ChatItem.APPLIED -> tr("已改好 {0} 处", card.changes.size); ChatItem.PARTIAL -> tr("已撤销 {0} 处，留着 {1} 处", undone.size, card.changes.size - undone.size)
+            ChatItem.CANCELLED, ChatItem.PENDING -> tr("已取消"); else -> tr("已撤销")
+        }, fontSize = 12.sp, color = if (st == ChatItem.APPLIED) C.ClayDeep else C.Faint, fontWeight = FontWeight.SemiBold)
+        card.changes.forEachIndexed { i, ch ->
+            val gone = i in undone || st == ChatItem.UNDONE || st == ChatItem.CANCELLED
+            Text(ch.title, fontSize = 15.sp, color = if (gone) C.Faint else C.Ink, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp),
+                textDecoration = if (gone) TextDecoration.LineThrough else null)
+            if (!gone) for (l in ch.lines) Row(Modifier.padding(top = 3.dp)) {
                 Text(l.label, fontSize = 12.sp, color = C.Faint, modifier = Modifier.width(84.dp))
                 Column(Modifier.weight(1f)) {
-                    if (l.before != null) Text(l.before, fontSize = 13.sp, color = C.Soft, textDecoration = if (st == ChatItem.CANCELLED) null else TextDecoration.LineThrough)
+                    if (l.before != null) Text(l.before, fontSize = 13.sp, color = C.Soft, textDecoration = TextDecoration.LineThrough)
                     if (l.after != null) Text((if (l.before != null) "→ " else "+ ") + l.after, fontSize = 13.sp, color = C.Ink, fontWeight = FontWeight.Medium)
                 }
             }
         }
         if (card.failed > 0) Text(tr("{0} 项没法执行，已跳过", card.failed), fontSize = 11.sp, color = C.Faint, modifier = Modifier.padding(top = 6.dp))
-        if (st == ChatItem.PENDING && card.plan != null) Row(Modifier.padding(top = 12.dp)) {
-            PrimaryButton(tr("确认"), Modifier.weight(1f)) { onConfirm(card) }
-            Spacer(Modifier.width(10.dp))
-            GhostButton(tr("取消"), Modifier.weight(0.6f)) { onCancel(card) }
-        }
-        if (st == ChatItem.APPLIED && card.plan != null && AiUndo.last.value != null && card === AiChat.items.lastOrNull { it is ChatItem.Card && it.st.value == ChatItem.APPLIED })
-            Text(tr("撤销"), fontSize = 13.sp, color = C.ClayDeep, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { onUndo() }.padding(6.dp))
+        if (card.batch != null && card.batch.left > 0)
+            Text(tr("撤销…"), fontSize = 13.sp, color = C.ClayDeep, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { onUndo(card) }.padding(6.dp))
     }
 }
 
