@@ -498,6 +498,68 @@ if curl -sfL --retry 3 -o out/asr.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/
   onScreen "删除语音模型" || { echo "voice settings: delete button missing"; fail=1; }
   go table:0; sleep 1
 else echo "voice model download skipped (network)"; HAVE_ASR=no; fi
+# ---------- AI 帮我找课表（本机假教务 tools/fake_jw.py + fake_ai.py 里的剧本；不是真学校、也不是真模型） ----------
+# 登录页上直接导入失败 → 出「AI 帮我找课表」→ 一次性说明 → AI 想点密码框、想输入都被代码拦下 → 让用户自己登录；
+# 用户登录（钩子假装用户自己填的）→ 再导入失败 → AI：读页 → 点错 → 返回 → 滚动 → 点「我的课表」→ 读 → 截图 → 严格 JSON（带围栏 / 末尾逗号）→ 导入预览 → 导入；
+# 再跑一次中途点「停止」。
+python3 tools/fake_jw.py 8767 2> shots/fake-jw.log &
+FJ=$!
+sleep 1; adb reverse tcp:8767 tcp:8767
+jwwait() { for i in $(seq 1 ${2:-90}); do sleep 1; adb logcat -d -s ZhishiTest | grep -q "$1" && return 0; done; echo "timeout waiting for $1"; return 1; }
+jwdirect() {  # 点「导入课表」（直接导入），等它失败
+  adb logcat -c; tapExact 导入课表
+  jwwait "JW fail\|JW parsed" 40 || true
+  adb logcat -d -s ZhishiTest | grep "JW " | tee -a shots/jwai.txt
+}
+adb shell am start -n $P/$A --es aifake http://127.0.0.1:8766 --ez jwaireset true > /dev/null; sleep 1
+go table:0; sleep 1
+adb shell am start -n $P/$A --es open table:6 --es jwkind qz --es jwurl http://127.0.0.1:8767/login.html > /dev/null; shot 17-jwai-login 8
+jwdirect; shot 17-jwai-direct-fail 1
+onScreen "AI 帮我找课表" || { echo "JWAI: offer missing after direct import failed"; fail=1; }
+tapText "AI 帮我找课表"; shot 17-jwai-consent 2
+onScreen "同意并开始" || { echo "JWAI: one-time consent notice missing"; fail=1; }
+adb logcat -c
+tapExact 同意并开始
+jwwait "JWAI END" 60; shot 17-jwai-needlogin 2
+adb logcat -d -s ZhishiTest | grep "JWAI" | tee -a shots/jwai.txt > shots/jwai-a.txt
+grep -q "JWAI STEP 1 read_page" shots/jwai-a.txt || { echo "JWAI: read_page step missing"; fail=1; }
+grep -q "JWAI STEP 1 click .*refused" shots/jwai-a.txt || { echo "JWAI: click on the password field was not refused"; fail=1; }
+grep -q "JWAI STEP 1 type_text .*refused" shots/jwai-a.txt || { echo "JWAI: typing tool was not refused"; fail=1; }
+grep -q "JWAI END NeedLogin" shots/jwai-a.txt || { echo "JWAI: expected NeedLogin on the login page"; fail=1; }
+grep -q "home.html" shots/fake-jw.log && { echo "JWAI: page left the login screen without the user"; fail=1; }
+onScreen "请先在网页里登录" || { echo "JWAI: need-login message missing"; fail=1; }
+# 用户自己登录（钩子在网页里填学号密码点登录，代表用户的操作；AI 没有任何输入工具）
+adb logcat -c
+adb shell am broadcast -n $P/com.zhishi.timetable.TestHookReceiver --ez jwfakelogin true > /dev/null; jwwait "JWAI fakelogin ok" 10; sleep 4
+shot 17-jwai-home 1
+jwdirect; shot 17-jwai-direct-fail-2 1
+tapText "AI 帮我找课表"; sleep 1
+onScreen "同意并开始" && { echo "JWAI: consent notice shown twice"; fail=1; tapExact 同意并开始; }
+sleep 9; shot 17-jwai-progress 0
+onScreen "AI 正在找课表" || { echo "JWAI: progress panel missing"; fail=1; }
+onScreen "停止" || { echo "JWAI: stop button missing"; fail=1; }
+jwwait "JWAI END" 90; sleep 2; shot 17-jwai-preview 1
+adb logcat -d -s ZhishiTest | grep "JWAI" | tee -a shots/jwai.txt > shots/jwai-b.txt
+for want in "STEP 2 click 通知公告" "STEP 4 back" "STEP 5 scroll down" "STEP 7 click 我的课表" "STEP 9 screenshot" "END Found n=6 steps=9"; do
+  grep -qF "JWAI $want" shots/jwai-b.txt || { echo "JWAI: missing '$want'"; fail=1; }
+done
+grep -q "kb.html" shots/fake-jw.log || { echo "JWAI: timetable page never opened"; fail=1; }
+onScreen "识别到 6 节课" || { echo "JWAI: import preview missing"; fail=1; }
+onScreen "计算机网络" || { echo "JWAI: preview content missing"; fail=1; }
+tapText "导入 6 节"; sleep 3; shot 17-jwai-imported 1
+adb logcat -c; adb shell am start -n $P/$A --ez aistate true > /dev/null; sleep 2
+adb logcat -d -s ZhishiTest | grep "AISTATE" | tail -1 | tee -a shots/jwai.txt | grep -q "操作系统@1" || { echo "JWAI: imported courses not in the timetable"; fail=1; }
+adb shell input keyevent KEYCODE_BACK; sleep 1
+# 停止：再开一次，跑到一半点「停止」
+go table:0; sleep 1
+adb shell am start -n $P/$A --es open table:6 --es jwkind qz --es jwurl http://127.0.0.1:8767/home.html > /dev/null; sleep 8
+jwdirect
+adb logcat -c; tapText "AI 帮我找课表"; sleep 5; tapExact 停止; sleep 2; shot 17-jwai-stopped 1
+adb logcat -d -s ZhishiTest | grep "JWAI" | tee -a shots/jwai.txt | grep -q "JWAI STOP" || { echo "JWAI: stop did not work"; fail=1; }
+onScreen "已停止" || { echo "JWAI: stopped message missing"; fail=1; }
+sleep 4; adb logcat -d -s ZhishiTest | grep -q "JWAI END" && { echo "JWAI: run kept reporting after stop"; fail=1; }
+kill $FJ 2>/dev/null
+go table:0; sleep 1
 go table:8; shot 12-import-menu-ai 3
 go table:0; sleep 1
 kill $FA 2>/dev/null

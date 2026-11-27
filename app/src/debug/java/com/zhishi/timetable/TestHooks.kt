@@ -45,6 +45,14 @@ object TestHooks {
         i.getStringExtra("tour")?.let { Tour.show.value = it }
         // 课表网页导入：--es jwkind qz --es jwurl file:///android_asset/jwtest.html --ez jwauto true
         i.getStringExtra("jwkind")?.let { TimetableTest.webKind = it; TimetableTest.webUrl = i.getStringExtra("jwurl"); TimetableTest.autoImport = i.getBooleanExtra("jwauto", false) }
+        // AI 帮我找课表：--ez jwaireset true 清掉「同意过」的记录（再弹一次说明）；
+        //  --ez jwfakelogin true 假装用户自己在假教务登录页上填了学号密码并点了登录（tools/fake_jw/login.html；AI 从来不填）
+        if (i.getBooleanExtra("jwaireset", false)) JwAiConsent.reset(c)
+        if (i.getBooleanExtra("jwfakelogin", false)) {
+            val w = TimetableTest.jwWeb?.get()
+            Log.i("ZhishiTest", "JWAI fakelogin web=${w != null}")
+            w?.evaluateJavascript("(function(){var u=document.getElementById('user'),p=document.getElementById('pass');if(!u||!p)return 'no form';u.value='20260001';p.value='user-typed';document.getElementById('login').click();return 'ok';})()") { r -> Log.i("ZhishiTest", "JWAI fakelogin $r") }
+        }
         // 教务导入页搜索框预填：--es jwq 大连
         i.getStringExtra("jwq")?.let { TimetableTest.query = it; TimetableTest.webKind = null; TimetableTest.webUrl = null }
         // AI（冒烟测试接本机假的 OpenAI 兼容服务器 tools/fake_ai.py）：

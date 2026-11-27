@@ -35,6 +35,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -239,6 +240,12 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
     var loading by remember { mutableStateOf(false) }   // onPageStarted 到 onPageFinished 之间（跳转、WebVPN 重定向中）
     var campuses by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
     var wv by remember { mutableStateOf<WebView?>(null) }
+    // AI 帮我找课表：正在跑的那一次（null = 没在跑）、跑完的提示、两个对话框
+    var webPage by remember { mutableStateOf<JwWebPage?>(null) }
+    var ai by remember { mutableStateOf<JwAiRun?>(null) }
+    var aiMsg by remember { mutableStateOf<String?>(null) }
+    var askConsent by remember { mutableStateOf(false) }
+    var askSetup by remember { mutableStateOf(false) }
     // 电脑版网页：有的统一认证 / 二次认证页面在手机版模板下显示不出来，换成电脑浏览器的标识再加载
     var desktop by remember { mutableStateOf(prefs(c).getBoolean("desktop", false)) }
     val kname = if (kind == "neu") tr("东北大学") else Jw.KINDS.firstOrNull { it.id == kind }?.name?.let { tr(it) } ?: kind
@@ -267,7 +274,7 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
     fun grab(arg: String?) {
         val w = wv ?: return
         if (busy) return                                   // 连点只算一次
-        lastArg = arg; err = null; busy = true; stepNow = "start"
+        lastArg = arg; err = null; aiMsg = null; busy = true; stepNow = "start"
         val t = ++tok
         if (loading && progress < 100) { pending = true; stepNow = "page" }   // 等页面加载完（onPageFinished 里接着导）
         else w.evaluateJavascript(jwScript(jsKind, arg, t), null)
@@ -275,6 +282,31 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
         scope.launch {
             kotlinx.coroutines.delay(90_000)
             if (busy && tok == t) { tok++; fail("timeout", "timeout", null) }
+        }
+    }
+    fun startAi() {
+        if (ai != null) return
+        if (!Ai.ready(c)) { askSetup = true; return }
+        if (!JwAiConsent.ok(c)) { askConsent = true; return }
+        val page = webPage ?: return
+        err = null; aiMsg = null; busy = false; pending = false; tok++
+        val run = JwAiRun(); ai = run
+        jwAiLog("START url=${hostOf(addr)}")
+        val client = Ai.client(c); val per = AiVision.periods(c); val total = Term.totalWeeks(c); val lang = Tr.lang
+        scope.launch {
+            val out = withContext(Dispatchers.IO) {
+                JwAgent(client, page, per, total, lang = lang).run({ st ->
+                    Handler(Looper.getMainLooper()).post { if (ai === run) { run.steps.add(st); jwAiLog("STEP ${st.n} ${st.tool} ${st.label}${if (st.refused) " refused" else ""}") } }
+                }, { run.stop.get() })
+            }
+            if (ai === run) {
+                ai = null
+                jwAiLog("END ${out.javaClass.simpleName}" + if (out is JwAgent.Outcome.Found) " n=${out.courses.size} steps=${out.steps}" else "")
+                when (out) {
+                    is JwAgent.Outcome.Found -> { CookieManager.getInstance().flush(); onParsed(out.courses) }
+                    else -> aiMsg = jwAiOutcomeText(out)
+                }
+            }
         }
     }
     val handle: (String) -> Unit = handle@{ s ->
@@ -336,9 +368,9 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
                     setupJwWebView(this, desktop)
                     addJavascriptInterface(Bridge({ onResult.value(it) }, { t, st -> if (t == tok) stepNow = st }), "ZhishiJw")
                     webViewClient = object : WebViewClient() {
-                        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) { addr = url; loading = true }
+                        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) { addr = url; loading = true; webPage?.started() }
                         override fun onPageFinished(view: WebView, url: String) {
-                            addr = url; loading = false; CookieManager.getInstance().flush()
+                            addr = url; loading = false; webPage?.finished(); CookieManager.getInstance().flush()
                             if (pending && busy) { pending = false; view.evaluateJavascript(jwScript(jsKind, lastArg, tok), null) }
                             if (TimetableTest.autoImport) { TimetableTest.autoImport = false; grab(null) }
                         }
@@ -346,6 +378,8 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
                     }
                     webChromeClient = JwChrome(ctx, this) { progress = it }
                     wv = this
+                    webPage = JwWebPage(this)
+                    if (BuildConfig.HOOKS) TimetableTest.jwWeb = java.lang.ref.WeakReference(this)
                     if (start.isNotBlank()) loadUrl(start)
                 }
             }, onRelease = { it.stopLoading(); it.destroy() }, modifier = Modifier.fillMaxSize())
@@ -358,6 +392,9 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
                 err?.let { e ->
                     Column(Modifier.fillMaxWidth().liquidGlass(RoundedCornerShape(20.dp), Glass.THICK, shadow = 6.dp).padding(14.dp)) {
                         Text(e.msg, fontSize = 12.sp, color = C.ClayDeep, lineHeight = 17.sp)
+                        // 直接导入不行：让用户自己的 AI 帮忙找课表页面（JwAgent）
+                        Text(tr("AI 帮我找课表"), fontSize = 13.sp, color = C.OnClay, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, style = LocalTextStyle.current.copy(shadow = null),
+                            modifier = Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(C.ClayDeep).clickable { startAi() }.padding(vertical = 9.dp))
                         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(tr("重试"), fontSize = 12.sp, color = C.OnClay, fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(C.Clay).clickable { grab(lastArg) }.padding(horizontal = 12.dp, vertical = 6.dp))
@@ -373,7 +410,21 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
                     }
                     Spacer(Modifier.height(8.dp))
                 }
-                Row(Modifier.fillMaxWidth().liquidGlass(CircleShape, Glass.THICK, shadow = 10.dp).padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                aiMsg?.let { m ->
+                    Column(Modifier.fillMaxWidth().liquidGlass(RoundedCornerShape(20.dp), Glass.THICK, shadow = 6.dp).padding(14.dp)) {
+                        Text(m, fontSize = 12.sp, color = C.ClayDeep, lineHeight = 17.sp)
+                        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(tr("让 AI 再找一次"), fontSize = 12.sp, color = C.OnClay, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(C.Clay).clickable { startAi() }.padding(horizontal = 12.dp, vertical = 6.dp))
+                            Spacer(Modifier.weight(1f))
+                            Text("×", fontSize = 16.sp, color = C.Faint, modifier = Modifier.clip(CircleShape).clickable { aiMsg = null }.padding(horizontal = 8.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                val run = ai
+                if (run != null) JwAiProgress(run) { run.stop.set(true); ai = null; aiMsg = tr("已停止，网页还在原来的地方。"); jwAiLog("STOP") }
+                else Row(Modifier.fillMaxWidth().liquidGlass(CircleShape, Glass.THICK, shadow = 10.dp).padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Text(if (busy) (if (pending) tr("页面还在加载，加载完自动导入…") else tr("正在{0}…", tr(JwOutcome.stepLabel(stepNow)))) else if (kind in setOf("generic", "cf", "nr", "umooc")) tr("登录后打开课表页面，再点导入") else tr("登录后直接点导入，不用打开课表页面"), fontSize = 12.sp, color = C.Soft, lineHeight = 16.sp, modifier = Modifier.weight(1f),
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -385,6 +436,19 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
             }
         }
     }
+    if (askConsent) AlertDialog(onDismissRequest = { askConsent = false }, containerColor = Color.Transparent, tonalElevation = 0.dp, shape = DialogShape, modifier = dialogGlass(),
+        title = { Text(tr("AI 帮我找课表"), color = C.Ink) },
+        text = {
+            Text(tr("请你自己先在网页里登录。之后 AI 会读取当前网页的文字、表格和截图，发给你在「AI 设置」里填的服务商（{0}），由它帮你点到课表页面、读出课表，再进导入预览。AI 不能输入任何东西，也不会碰密码框，账号密码不会发出去。最多 {1} 步，随时可以停止。",
+                hostOf(Ai.settings(c).base).ifEmpty { tr("你自己的服务商") }, JwAgent.MAX_STEPS), fontSize = 13.sp, color = C.Soft, lineHeight = 19.sp)
+        },
+        confirmButton = { TextButton({ askConsent = false; JwAiConsent.accept(c); startAi() }) { Text(tr("同意并开始"), color = C.ClayDeep, fontWeight = FontWeight.SemiBold) } },
+        dismissButton = { TextButton({ askConsent = false }) { Text(tr("取消"), color = C.Soft) } })
+    if (askSetup) AlertDialog(onDismissRequest = { askSetup = false }, containerColor = Color.Transparent, tonalElevation = 0.dp, shape = DialogShape, modifier = dialogGlass(),
+        title = { Text(tr("还没设置 AI"), color = C.Ink) },
+        text = { Text(tr("先在「我的 → AI 设置」里填好你自己的接口，再回来用「AI 帮我找课表」。"), fontSize = 13.sp, color = C.Soft, lineHeight = 19.sp) },
+        confirmButton = { TextButton({ askSetup = false; Nav.open.value = "ai_settings" }) { Text(tr("去设置"), color = C.ClayDeep, fontWeight = FontWeight.SemiBold) } },
+        dismissButton = { TextButton({ askSetup = false }) { Text(tr("取消"), color = C.Soft) } })
     if (pickKind) AlertDialog(onDismissRequest = { pickKind = false }, containerColor = Color.Transparent, tonalElevation = 0.dp, shape = DialogShape, modifier = dialogGlass(),
         title = { Text(tr("换教务类型"), color = C.Ink) },
         text = {
@@ -410,3 +474,59 @@ private fun JwWeb(kind: String, start: String, onBack: () -> Unit, onParsed: (Li
     }
 }
 
+
+/** 一次 AI 找课表：进度（每一步）和停止标记。 */
+class JwAiRun {
+    val steps = mutableStateListOf<JwAgent.Step>()
+    val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+}
+
+private fun jwAiLog(s: String) { if (BuildConfig.HOOKS) android.util.Log.i("ZhishiTest", "JWAI $s") }
+
+/** 进度里的一行。 */
+internal fun jwAiStepText(s: JwAgent.Step): String = when {
+    s.refused && s.tool == "click" -> tr("已拦下：AI 不能碰输入框和密码框")
+    s.refused -> tr("已拦下：AI 只能读页面和点链接，不能输入")
+    s.tool == "read_page" -> tr("读取页面")
+    s.tool == "click" -> tr("点击「{0}」", s.label)
+    s.tool == "back" -> tr("返回上一页")
+    s.tool == "scroll" -> if (s.label == "up") tr("向上滚动") else tr("向下滚动")
+    s.tool == "screenshot" -> tr("截图给看图模型看")
+    s.tool == "submit_timetable" -> tr("整理出 {0} 节课", s.label)
+    else -> s.tool
+}
+
+internal fun jwAiOutcomeText(o: JwAgent.Outcome): String = when (o) {
+    is JwAgent.Outcome.NeedLogin -> tr("AI 看到的还是登录页：请先在网页里登录（二次认证也要做完），再让 AI 找。") + if (o.message.isNotBlank()) "\n" + o.message.take(120) else ""
+    is JwAgent.Outcome.NotFound -> tr("AI 没找到课表。可以自己在网页里打开课表页面，再让 AI 读一次。") + if (o.reason.isNotBlank() && o.reason != "empty") "\n" + o.reason.take(160) else ""
+    is JwAgent.Outcome.StepLimit -> tr("AI 走了 {0} 步还没找到课表。可以自己先打开课表页面，再让 AI 读一次。", JwAgent.MAX_STEPS)
+    is JwAgent.Outcome.Failed -> aiErrorText(o.error)
+    is JwAgent.Outcome.Stopped -> tr("已停止，网页还在原来的地方。")
+    is JwAgent.Outcome.Found -> ""
+}
+
+@Composable
+private fun JwAiProgress(run: JwAiRun, onStop: () -> Unit) {
+    val last = run.steps.lastOrNull()
+    Column(Modifier.fillMaxWidth().liquidGlass(RoundedCornerShape(22.dp), Glass.THICK, shadow = 10.dp).padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(16.dp), color = C.Clay, strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(tr("AI 正在找课表"), fontSize = 14.sp, color = C.Ink, fontWeight = FontWeight.SemiBold)
+                Text(tr("第 {0} / {1} 步", last?.n ?: 0, JwAgent.MAX_STEPS), fontSize = 11.sp, color = C.Faint)
+            }
+            Box(Modifier.glassButton(CircleShape, tint = C.Clay, fill = C.Sand, shadow = 0.dp) { onStop() }.padding(horizontal = 16.dp, vertical = 9.dp)) {
+                Text(tr("停止"), fontSize = 13.sp, color = C.Ink, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        val shown = run.steps.takeLast(4)
+        if (shown.isEmpty()) Text(tr("AI 在看网页…"), fontSize = 12.sp, color = C.Soft, modifier = Modifier.padding(top = 6.dp))
+        shown.forEachIndexed { i, st ->
+            val now = i == shown.size - 1
+            Text((if (st.refused) "⛔ " else if (now) "› " else "✓ ") + jwAiStepText(st), fontSize = 12.sp, color = if (st.refused) C.ClayDeep else if (now) C.Ink else C.Soft,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+        }
+        Text(tr("网页内容只发给你在「AI 设置」里填的服务商；AI 不能输入任何东西。"), fontSize = 10.sp, color = C.Faint, lineHeight = 14.sp, modifier = Modifier.padding(top = 6.dp, end = 8.dp))
+    }
+}

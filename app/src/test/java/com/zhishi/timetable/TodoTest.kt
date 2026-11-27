@@ -276,11 +276,13 @@ class TodoTest {
     }
 
     @Test fun whatsNewNewestIsTodoScroll() {
-        assertEquals("sync", Tour.WHATS_NEW.first().id)
+        assertEquals("jwai", Tour.WHATS_NEW.first().id)
         val sy = Tour.WHATS_NEW.first().pages.joinToString { it.title + it.body }
         assertTrue(sy.contains("MCP") && sy.contains("撤销") && sy.contains("默认关着") && sy.contains("小部件"))
-        val vo = Tour.WHATS_NEW.first { it.id == "voice" }.pages.joinToString { it.title + it.body }
+        val vo = Tour.WHATS_NEW.first().pages.joinToString { it.title + it.body }
         assertTrue(vo.contains("麦克风") && vo.contains("按住") && vo.contains("上滑取消") && vo.contains("离线") && vo.contains("AI 设置"))
+        // 这一版的五项：离线语音、MCP、直接生效 + 可勾选撤销、小部件即时刷新、AI 帮我找课表
+        assertEquals(listOf("离线语音输入", "连接 AI 智能体（MCP）", "AI 改完直接生效，想撤哪项撤哪项", "待办小部件立刻更新", "AI 帮我找课表"), Tour.WHATS_NEW.first().pages.map { it.title })
         val ac = Tour.WHATS_NEW.first { it.id == "aichats" }.pages.joinToString { it.title + it.body }
         assertTrue(ac.contains("AI 对话记录") && ac.contains("回复") && ac.contains("正中间"))
         assertTrue(Tour.WHATS_NEW.any { it.id == "ai1" })

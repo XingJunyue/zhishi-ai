@@ -101,6 +101,8 @@ object TimetableTest {
     @Volatile var autoImport = false
     /** 教务导入页搜索框预填（冒烟测试截学校搜索用）。 */
     @Volatile var query: String? = null
+    /** 教务导入页的 WebView（只有带测试钩子的构建才记：冒烟测试假装用户登录）。 */
+    @Volatile var jwWeb: java.lang.ref.WeakReference<android.webkit.WebView>? = null
 }
 
 /** 「导入课表」自动弹出的规则。 */
