@@ -276,8 +276,10 @@ class TodoTest {
     }
 
     @Test fun whatsNewNewestIsTodoScroll() {
-        assertEquals("voice", Tour.WHATS_NEW.first().id)
-        val vo = Tour.WHATS_NEW.first().pages.joinToString { it.title + it.body }
+        assertEquals("sync", Tour.WHATS_NEW.first().id)
+        val sy = Tour.WHATS_NEW.first().pages.joinToString { it.title + it.body }
+        assertTrue(sy.contains("MCP") && sy.contains("撤销") && sy.contains("默认关着") && sy.contains("小部件"))
+        val vo = Tour.WHATS_NEW.first { it.id == "voice" }.pages.joinToString { it.title + it.body }
         assertTrue(vo.contains("麦克风") && vo.contains("按住") && vo.contains("上滑取消") && vo.contains("离线") && vo.contains("AI 设置"))
         val ac = Tour.WHATS_NEW.first { it.id == "aichats" }.pages.joinToString { it.title + it.body }
         assertTrue(ac.contains("AI 对话记录") && ac.contains("回复") && ac.contains("正中间"))
