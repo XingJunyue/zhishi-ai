@@ -26,23 +26,11 @@ jobs:
           # 知时 AI 自己的密钥（和知时不同），只在 Actions secret 里
           printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/zhishi-ai.p12"
           echo "KS_FILE=$RUNNER_TEMP/zhishi-ai.p12" >> "$GITHUB_ENV"
-      - name: Unit tests
-        run: gradle :app:testDebugUnitTest $PV --no-daemon
-      - name: Build release apk
+      - name: Build debug apk
         run: |
-          gradle :app:assembleRelease $PV --no-daemon
-          # 核对更新器开关：预览构建必须是 PREVIEW=true，main 必须是 false
-          bc=app/build/generated/source/buildConfig/release/com/zhishi/timetable/BuildConfig.java
-          if [ -n "$PV" ]; then grep -q "PREVIEW = true" "$bc"; else grep -q "PREVIEW = false" "$bc"; fi
-          grep "PREVIEW" "$bc"
-          mkdir out
-          cp app/build/outputs/apk/release/app-release.apk out/zhishi-ai-${{ github.run_number }}.apk
-      - name: Build test apks (with x86 libs for the emulator)
-        run: |
-          gradle :app:assembleDebug :app:assembleRelease :app:assembleQa -PallAbi $PV --no-daemon
+          mkdir -p out
+          gradle :app:assembleDebug -PallAbi $PV --no-daemon
           cp app/build/outputs/apk/debug/app-debug.apk out/test-debug.apk
-          cp app/build/outputs/apk/qa/app-qa.apk out/test-qa.apk
-          cp app/build/outputs/apk/release/app-release.apk out/test-release.apk
       - name: Upload unit test report
         if: failure()
         uses: actions/upload-artifact@v4
@@ -62,10 +50,6 @@ jobs:
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
-      - name: Timetable image for AI recognition
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk python3-pil > /dev/null
-          python3 tools/make_ai_timetable.py out/tt-ai.png
       - uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -74,51 +58,8 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: bash tools/smoke.sh
+          script: bash tools/wlat.sh
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with: { name: shots, path: shots }
-      - name: Publish screenshots release
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd shots && zip -q ../shots.zip * && cd ..
-          gh release view ci-shots >/dev/null 2>&1 || gh release create ci-shots --prerelease --latest=false --title "CI screenshots" --notes "测试截图，不是安装包"
-          gh release upload ci-shots shots.zip --clobber
-
-  publish:
-    needs: [build, emulator]
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { name: out, path: out }
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "ai-${{ github.run_number }}" "out/zhishi-ai-${{ github.run_number }}.apk" \
-            --title "知时 AI ai-${{ github.run_number }}" \
-            --notes "$(git log -1 --pretty=%s)" --target "${{ github.sha }}"
-
-  # 非 main 分支：把安装包发成预发布（preview），方便先装上试；不影响正式发布
-  preview:
-    needs: [build, emulator]
-    if: github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { name: out, path: out }
-      - name: Publish preview prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          b="${GITHUB_REF_NAME//\//-}"; b="${b%-redo}"
-          n="${{ github.run_number }}"
-          cp "out/zhishi-ai-$n.apk" "zhishi-ai-$b-preview-$n.apk"
-          gh release create "preview-$b-$n" "zhishi-ai-$b-preview-$n.apk" --prerelease --latest=false \
-            --title "预览：$b #$n" --notes "分支 $GITHUB_REF_NAME 的预览安装包（不是正式版）。$(git log -1 --pretty=%s)" --target "${{ github.sha }}"

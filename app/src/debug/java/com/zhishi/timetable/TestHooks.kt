@@ -103,6 +103,27 @@ object TestHooks {
         if (i.getBooleanExtra("aiundo", false)) { AiChat.undo(c); Log.i("ZhishiTest", "AIUNDO ${AiChat.toast.value}"); logState(c) }
         if (i.getBooleanExtra("aistate", false)) logState(c)
         voice(c, i)
+        widgetLatency(c, i)
+    }
+
+    /**
+     * 待办小部件刷新延迟（WLAT，见 WidgetProbe）：
+     *  --es wlat 标题        新加一条待办（和界面上加待办同一个 TodoStore.put），从这一刻计时
+     *  --es wlatedit 新标题  把第一条没完成的待办改名；--es wlatdone 标题  把这条标成完成
+     *  --es wlatmark 标题    只开始计时（冒烟脚本紧接着按 HOME：量「在 App 里改完回到桌面」）
+     *  --ez wpin true        请求把 4×2 待办小部件放到桌面（桌面弹确认框，脚本去点）
+     */
+    private fun widgetLatency(c: Context, i: Intent) {
+        fun mark(t: String) { WidgetProbe.marker = t; WidgetProbe.t0 = System.currentTimeMillis(); Log.i("ZhishiTest", "WLAT start $t") }
+        i.getStringExtra("wlatmark")?.let { mark(it) }
+        i.getStringExtra("wlat")?.let { t -> mark(t); val now = System.currentTimeMillis(); TodoStore.put(c, Todo("w" + now.toString(36), t, "", now + 3 * 3_600_000L, created = now)) }
+        i.getStringExtra("wlatedit")?.let { t -> val o = CourseWidgets.todoPlan(TodoStore.all(c), System.currentTimeMillis()).list.firstOrNull(); mark(t); if (o != null) TodoStore.put(c, o.copy(title = t)) }
+        i.getStringExtra("wlatdone")?.let { t -> val o = TodoStore.all(c).firstOrNull { it.title == t }; mark(t); if (o != null) TodoStore.toggle(c, o) }
+        if (i.getBooleanExtra("wpin", false)) {
+            val m = android.appwidget.AppWidgetManager.getInstance(c)
+            val ok = try { m.requestPinAppWidget(android.content.ComponentName(c, TodoWidget4::class.java), null, null) } catch (x: Throwable) { false }
+            Log.i("ZhishiTest", "WPIN requested=$ok supported=${m.isRequestPinAppWidgetSupported}")
+        }
     }
 
     /**

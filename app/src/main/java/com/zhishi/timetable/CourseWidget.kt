@@ -36,6 +36,13 @@ object LevelTag {
  * 课表小部件：4×2 和 2×2。上面是正在上的课（课间就是最近的下一节），下面一条是再下一节；
  * 今天没课 / 课都上完了就是白底加颜文字。整张画成一张图，排版和预览图一致。
  */
+/** 测试用（只有调试 / qa 版的钩子会设 marker）：量待办小部件从改动到桌面取到新行的延迟，打到 logcat「WLAT」。 */
+object WidgetProbe {
+    @Volatile var marker: String? = null
+    @Volatile var t0 = 0L
+    fun log(what: String) { if (marker != null) android.util.Log.i("ZhishiTest", "WLAT $what +${System.currentTimeMillis() - t0}ms") }
+}
+
 object CourseWidgets {
     /** 今天的课排好后，此刻该显示什么（纯函数，单测）。 */
     data class Now(val main: Slot?, val live: Boolean, val next: Slot?, val total: Int, val index: Int, val doneAll: Boolean)
@@ -179,6 +186,7 @@ object CourseWidgets {
             val head = "$base|${tp.list.size}|${tp.overdue}|${tp.today}|${tp.allDone}"
             val rows = "$base|${tp.list.hashCode()}|${tp.list.map { todoState(it, nowMs) }}"
             val headDirty = force || head != lastTodoSig
+            WidgetProbe.log("update head=$headDirty rows=${rows != lastRowSig}")
             if (headDirty) {
                 lastTodoSig = head
                 for ((ids, wide) in listOf(tBig to true, tSmall to false)) for (id in ids) {
@@ -946,6 +954,7 @@ class TodoRows(private val c: Context, private val id: Int, private val wide: Bo
             all = Term.desired(c).filter { it.kind == "course" }
             opts = if (id == AppWidgetManager.INVALID_APPWIDGET_ID) null else AppWidgetManager.getInstance(c)?.getAppWidgetOptions(id)
             tp = CourseWidgets.todoPlan(TodoStore.all(c), System.currentTimeMillis())
+            WidgetProbe.marker?.let { m -> WidgetProbe.log("load id=$id n=${tp?.list?.size} has=${tp?.list?.any { it.title == m }}") }
         } catch (x: Throwable) { tp = null; android.util.Log.w("Zhishi", "待办列表读不出来：${x.message}") }
     }
     override fun getCount(): Int = tp?.list?.size ?: 0
@@ -957,6 +966,7 @@ class TodoRows(private val c: Context, private val id: Int, private val wide: Bo
         val bmp = if (p == null || t == null) CourseWidgets.blank else try { CourseWidgets.todoRowBitmap(c, wide, opts, t, p.now, all, pos == p.list.size - 1) }
             catch (x: Throwable) { android.util.Log.w("Zhishi", "待办列表这一行画不出来：${x.message}"); CourseWidgets.blank }
         v.setImageViewBitmap(R.id.row, bmp)
+        if (t != null && t.title == WidgetProbe.marker) WidgetProbe.log("row id=$id pos=$pos")
         v.setOnClickFillInIntent(R.id.row_root, CourseWidgets.rowFillIn())
         return v
     }
