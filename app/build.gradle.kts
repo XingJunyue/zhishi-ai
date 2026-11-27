@@ -1,3 +1,6 @@
+import java.net.URI
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -9,7 +12,7 @@ val sherpaVer = "2.0.3"
 val sherpaAar = file("libs/sherpa-onnx-static-link-onnxruntime-$sherpaVer.aar")
 val sherpaSha = "7744a3a8f08f017d59c2d8ed8d9b700345561f5abe9f4e06dc6eaef3a0b977b4"
 fun sha256Of(f: File): String {
-    val md = java.security.MessageDigest.getInstance("SHA-256")
+    val md = MessageDigest.getInstance("SHA-256")
     f.inputStream().use { i -> val b = ByteArray(1 shl 16); while (true) { val n = i.read(b); if (n < 0) break; md.update(b, 0, n) } }
     return md.digest().joinToString("") { "%02x".format(it) }
 }
@@ -18,7 +21,7 @@ if (!sherpaAar.isFile || sha256Of(sherpaAar) != sherpaSha) {
     val tmp = File(sherpaAar.path + ".part")
     val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVer/${sherpaAar.name}"
     println("downloading $url")
-    java.net.URL(url).openStream().use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+    URI(url).toURL().openStream().use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
     val got = sha256Of(tmp)
     if (got != sherpaSha) { tmp.delete(); throw GradleException("sherpa-onnx aar sha256 mismatch: $got") }
     sherpaAar.delete(); tmp.renameTo(sherpaAar)
