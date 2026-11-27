@@ -82,6 +82,7 @@ object UndoCenter {
 }
 
 /** 自定义撤回：每项改动（前 → 后）带勾选框，「撤销所选」「全部撤销」。放在 App 最外层，哪里打开都一样。 */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun UndoSheetHost() {
     val b = UndoCenter.sheet.value ?: return
