@@ -50,7 +50,7 @@ object TestHooks {
         // AI（冒烟测试接本机假的 OpenAI 兼容服务器 tools/fake_ai.py）：
         //  --es aifake http://127.0.0.1:8766  写进「AI 设置」（故意不带 /v1，测地址容错）；--es aivision 模型名（空 = 不单独设）
         i.getStringExtra("aifake")?.let { b -> Ai.save(c, AiSettings(b, "test-key", "fake-chat", i.getStringExtra("aivision") ?: "fake-vision")); Log.i("ZhishiTest", "AI configured $b") }
-        if (i.getBooleanExtra("aireset", false)) { AiChat.reset(); AiUndo.last.value = null }
+        if (i.getBooleanExtra("aireset", false)) AiChat.reset()
         //  --es airec 文件名  识别 app 专属目录里的截图，结果打到 logcat（AIREC OK / ROW / FAIL）
         i.getStringExtra("airec")?.let { name ->
             val f = File(c.getExternalFilesDir(null), name)
@@ -85,7 +85,7 @@ object TestHooks {
             kotlinx.coroutines.MainScope().launch {
                 AiChat.say(c, t)
                 for (it in AiChat.items) when (it) {
-                    is ChatItem.Card -> Log.i("ZhishiTest", "AISAY CARD ${it.changes.joinToString(" / ") { ch -> ch.title }} state=${it.st.value}")
+                    is ChatItem.Card -> Log.i("ZhishiTest", "AISAY CARD ${it.changes.joinToString(" / ") { ch -> ch.title }} state=${it.state()} n=${it.changes.size} live=${it.batch != null}")
                     is ChatItem.Bot -> Log.i("ZhishiTest", "AISAY BOT ${it.text.take(120)}")
                     is ChatItem.User -> if (it.quote != null) Log.i("ZhishiTest", "AISAY QUOTE ${if (it.quote.fromUser) "user" else "bot"}|${it.quote.text.take(60)}|${it.text.take(60)}")
                     is ChatItem.Error -> Log.i("ZhishiTest", "AISAY ERROR ${it.text.take(200)}")
@@ -94,15 +94,41 @@ object TestHooks {
                 Log.i("ZhishiTest", "AISAY DONE items=${AiChat.items.size}")
             }
         }
-        //  --ez aiconfirm true  确认最后一张卡片（和点「确认」同一条路径）；--ez aiundo true  撤销；之后打 AISTATE
-        if (i.getBooleanExtra("aiconfirm", false)) {
-            val card = AiChat.items.lastOrNull { it is ChatItem.Card && it.st.value == ChatItem.PENDING } as? ChatItem.Card
-            Log.i("ZhishiTest", "AICONFIRM ${if (card != null && AiChat.confirm(c, card)) "ok" else "none"}")
-            logState(c)
+        //  --ez aiconfirm true：AI 的改动现在马上生效，没有要确认的卡片了（老对话里的卡片也不能再应用），只打 AICONFIRM none
+        if (i.getBooleanExtra("aiconfirm", false)) Log.i("ZhishiTest", "AICONFIRM none")
+        //  --ez aiundo true  全部撤销最后一批（和撤销列表里「全部撤销」同一条路径）；之后打 AIUNDO + AISTATE
+        if (i.getBooleanExtra("aiundo", false)) {
+            val b = AiChat.lastBatch.value
+            kotlinx.coroutines.MainScope().launch {
+                if (b != null) { AiChat.hookUndo(c); UndoCenter.run(c, b, UndoDeps.all(b.view())) }
+                Log.i("ZhishiTest", "AIUNDO ${if (b == null) "none" else UndoCenter.msg.value}"); logState(c)
+            }
         }
-        if (i.getBooleanExtra("aiundo", false)) { AiChat.undo(c); Log.i("ZhishiTest", "AIUNDO ${AiChat.toast.value}"); logState(c) }
+        undoHooks(c, i)
+        cloudHooks(c, i)
         if (i.getBooleanExtra("aistate", false)) logState(c)
         voice(c, i)
+        widgetLatency(c, i)
+    }
+
+    /**
+     * 待办小部件刷新延迟（WLAT，见 WidgetProbe）：
+     *  --es wlat 标题        新加一条待办（和界面上加待办同一个 TodoStore.put），从这一刻计时
+     *  --es wlatedit 新标题  把第一条没完成的待办改名；--es wlatdone 标题  把这条标成完成
+     *  --es wlatmark 标题    只开始计时（比如紧接着同步 / 撤销 / 按 HOME）
+     *  --ez wpin true        请求把 4×2 待办小部件放到桌面（要在前台请求；桌面弹确认框，脚本去点）
+     */
+    private fun widgetLatency(c: Context, i: Intent) {
+        fun mark(t: String) { WidgetProbe.marker = t; WidgetProbe.t0 = System.currentTimeMillis(); Log.i("ZhishiTest", "WLAT start $t") }
+        i.getStringExtra("wlatmark")?.let { mark(it) }
+        i.getStringExtra("wlat")?.let { t -> mark(t); val now = System.currentTimeMillis(); TodoStore.put(c, Todo("w" + now.toString(36), t, "", now + 3 * 3_600_000L, created = now)) }
+        i.getStringExtra("wlatedit")?.let { t -> val o = CourseWidgets.todoPlan(TodoStore.all(c), System.currentTimeMillis()).list.firstOrNull(); mark(t); if (o != null) TodoStore.put(c, o.copy(title = t)) }
+        i.getStringExtra("wlatdone")?.let { t -> val o = TodoStore.all(c).firstOrNull { it.title == t }; mark(t); if (o != null) TodoStore.toggle(c, o) }
+        if (i.getBooleanExtra("wpin", false)) {
+            val m = android.appwidget.AppWidgetManager.getInstance(c)
+            val ok = try { m.requestPinAppWidget(android.content.ComponentName(c, TodoWidget4::class.java), null, null) } catch (x: Throwable) { false }
+            Log.i("ZhishiTest", "WPIN requested=$ok supported=${m.isRequestPinAppWidgetSupported}")
+        }
     }
 
     /**
@@ -138,6 +164,63 @@ object TestHooks {
         }
         if (i.getBooleanExtra("asrstate", false))
             Log.i("ZhishiTest", "ASR STATE engine=${Voice.engineOk} installed=${Voice.installed(c)} perm=${Voice.perm(c)} dl=${Voice.dl.value.phase}")
+    }
+
+    /**
+     * 自定义撤回：
+     *  --ez undosheet true [--es undofor agent]  打开撤销列表（AI 的最后一批 / 智能体的那一批）
+     *  --es undopick 0,2   点这几行（和点勾选框一样，按依赖自动勾上 / 取消），打 UNDOSEL
+     *  --ez undorun true   撤销所选，打 UNDORUN + AISTATE
+     */
+    private fun undoHooks(c: Context, i: Intent) {
+        if (i.getBooleanExtra("undosheet", false)) {
+            if (i.getStringExtra("undofor") == "agent") UndoCenter.agentBatch.value?.let { UndoCenter.open(it) } else AiChat.undo(c)
+            UndoCenter.sheet.value?.let { b -> UndoCenter.sel.value = emptySet(); Log.i("ZhishiTest", "UNDOSHEET ${b.title} n=${b.entries.size} ${b.entries.joinToString(" / ") { it.change.title }}") } ?: Log.i("ZhishiTest", "UNDOSHEET none")
+        }
+        i.getStringExtra("undopick")?.let { v -> v.split(',').mapNotNull { it.trim().toIntOrNull() }.forEach { UndoCenter.toggle(it) }; Log.i("ZhishiTest", "UNDOSEL ${UndoCenter.sel.value.sorted()}") }
+        if (i.getBooleanExtra("undorun", false)) {
+            val b = UndoCenter.sheet.value
+            kotlinx.coroutines.MainScope().launch {
+                if (b != null) UndoCenter.run(c, b, UndoCenter.sel.value)
+                Log.i("ZhishiTest", "UNDORUN ${if (b == null) "none" else "undone=${b.undone.value.sorted()} msg=${UndoCenter.msg.value}"}"); logState(c)
+            }
+        }
+    }
+
+    /**
+     * 云同步 / MCP（接线上的服务器，冒烟测试注册一个临时用户，最后删掉）：
+     *  --ez cloudon true           打开同步（注册 + 整份推上去 + 拉一遍），打 CLOUD ON / CLOUD FAIL
+     *  --es cloudtoken 名字        建一个智能体令牌：令牌写进 app 专属目录的 agent.txt（冒烟脚本 adb pull 下来用 curl 调 MCP，不打进日志），
+     *                              并摆到「连接 AI 智能体」页上（截图）；打 CLOUD TOKEN ok
+     *  --ez cloudsync true         同步一次，打 CLOUD SYNC pushed=… taken=… agent=… banner=…
+     *  --ez cloudundo true         全部撤销底部提示里那一批智能体改动（走服务器的 undo + 同步），打 CLOUD UNDO
+     *  --ez clouddelete true       停止同步并删掉服务器上的账号（DELETE /v1/account），打 CLOUD DELETED
+     *  --ez cloudstate true        打 CLOUD STATE
+     */
+    private fun cloudHooks(c: Context, i: Intent) {
+        val ctx = c.applicationContext
+        fun bg(tag: String, f: () -> String) = Thread { val r = try { f() } catch (x: Throwable) { "FAIL ${x.javaClass.simpleName}: ${x.message}" }; Log.i("ZhishiTest", "CLOUD $tag $r") }.start()
+        if (i.getBooleanExtra("cloudon", false)) bg("ON") { CloudSync.enable(ctx); "ok uid=${CloudSync.userId(ctx)} pending=${CloudSync.pendingCount(ctx)}" }
+        i.getStringExtra("cloudtoken")?.let { name -> bg("TOKEN") {
+            val t = CloudSync.createToken(ctx, name)
+            File(ctx.getExternalFilesDir(null), "agent.txt").writeText(t.token)
+            CloudSync.onMain { McpUi.created.value = t; McpUi.ver.value++ }
+            "ok id=${t.id} url=${t.mcpUrl}"
+        } }
+        if (i.getBooleanExtra("cloudsync", false)) bg("SYNC") {
+            val o = CloudSync.syncBlocking(ctx) ?: throw IllegalStateException(CloudSync.lastError.value)
+            Thread.sleep(300)
+            "ok pushed=${o.pushed} taken=${o.taken.size} agent=${o.byAgent.size} banner=${UndoCenter.agentBatch.value?.let { b -> b.title + " n=" + b.entries.size } ?: "none"}"
+        }
+        if (i.getBooleanExtra("cloudundo", false)) {
+            val b = UndoCenter.agentBatch.value
+            kotlinx.coroutines.MainScope().launch {
+                val r = if (b != null) UndoCenter.run(c, b, UndoDeps.all(b.view())) else null
+                Log.i("ZhishiTest", "CLOUD UNDO ${if (r == null) "none" else "done=${r.done.size} err=${r.error}"}"); logState(c)
+            }
+        }
+        if (i.getBooleanExtra("clouddelete", false)) bg("DELETED") { CloudSync.disable(ctx, true); "ok token=${CloudSync.hasAccount(ctx)}" }
+        if (i.getBooleanExtra("cloudstate", false)) Log.i("ZhishiTest", "CLOUD STATE on=${CloudSync.enabled(ctx)} uid=${CloudSync.userId(ctx)} pending=${CloudSync.pendingCount(ctx)} enc=${CloudSync.tokenEncrypted(ctx)} err=${CloudSync.lastError.value}")
     }
 
     private fun logState(c: Context) {

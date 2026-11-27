@@ -239,33 +239,34 @@ adb shell input keyevent KEYCODE_BACK; sleep 1
 go todo; sleep 2
 adb shell am start -n $P/$A --ez aisheet true --es aitab todo > /dev/null; shot 12-ai-sheet-todo 3
 adb shell input keyevent KEYCODE_BACK; sleep 1
-# 对话 → 确认卡片 → 点「确认」→ 后面的课表页马上有这节课 → 撤销
+# 对话 → 改动马上生效（不再有确认卡片）：卡片「已改好 1 处」+ 提示条「已改好 1 处 · 撤销」→ 后面的课表页马上有这节课 → 全部撤销
 go table:0; sleep 1
 adb logcat -c
 adb shell am start -n $P/$A --ez aireset true --es aisay "周三第5-6节加一门机器学习" > /dev/null
-aiwait "AISAY DONE"; shot 12-ai-card 2
+aiwait "AISAY DONE"; shot 12-ai-applied 2
 adb logcat -d -s ZhishiTest | grep "AISAY" | tee shots/ai.txt
-grep -q "AISAY CARD 新增课程：机器学习" shots/ai.txt || { echo "AI add_course card missing"; fail=1; }
-tapExact 确认; sleep 3; shot 12-ai-applied 2
+grep -q "AISAY CARD 新增课程：机器学习 state=1 n=1 live=true" shots/ai.txt || { echo "AI add_course not applied immediately"; fail=1; }
+onScreen "确认这些更改" && { echo "confirmation card still shown"; fail=1; }
+onScreen "已改好 1 处" || { echo "undo prompt missing"; fail=1; }
 adb shell am start -n $P/$A --ez aistate true > /dev/null; sleep 2
 adb logcat -d -s ZhishiTest | grep "AISTATE" | tail -1 | tee -a shots/ai.txt | grep -q "机器学习@3" || { echo "AI course not applied"; fail=1; }
 adb shell input keyevent KEYCODE_BACK; sleep 2; shot 12-ai-after-table 2
 adb logcat -c
-adb shell am start -n $P/$A --ez aiundo true > /dev/null; sleep 2
+adb shell am start -n $P/$A --ez aiundo true > /dev/null; aiwait "AIUNDO"; sleep 1
 adb logcat -d -s ZhishiTest | grep "AISTATE\|AIUNDO" | tee -a shots/ai.txt | grep "AISTATE" | grep -q "机器学习" && { echo "AI undo did not remove the course"; fail=1; }
-# 待办（带截止和提醒）、换皮肤：走同一条确认路径
+# 待办（带截止和提醒）、换皮肤：同样马上生效
 adb logcat -c
 adb shell am start -n $P/$A --es aisay "加个待办" --es aitab todo > /dev/null; aiwait "AISAY DONE"; shot 12-ai-todo-card 2
-adb shell am start -n $P/$A --ez aiconfirm true > /dev/null; sleep 2
-adb logcat -d -s ZhishiTest | grep "AISAY\|AISTATE\|AICONFIRM" | tee -a shots/ai.txt | grep "AISTATE" | grep -q "交线代作业" || { echo "AI todo not applied"; fail=1; }
+adb shell am start -n $P/$A --ez aistate true > /dev/null; sleep 2
+adb logcat -d -s ZhishiTest | grep "AISAY\|AISTATE" | tee -a shots/ai.txt | grep "AISTATE" | grep -q "交线代作业" || { echo "AI todo not applied"; fail=1; }
 adb shell input keyevent KEYCODE_BACK; go todo; shot 12-ai-after-todo 3
 adb logcat -c
-adb shell am start -n $P/$A --es aisay "换个皮肤" > /dev/null; aiwait "AISAY DONE"; shot 12-ai-skin-card 2
-adb shell am start -n $P/$A --ez aiconfirm true > /dev/null; sleep 3; shot 12-ai-skin-applied 2
+adb shell am start -n $P/$A --es aisay "换个皮肤" > /dev/null; aiwait "AISAY DONE"; sleep 2; shot 12-ai-skin-applied 2
+adb shell am start -n $P/$A --ez aistate true > /dev/null; sleep 2
 adb logcat -d -s ZhishiTest | grep "AISTATE" | tee -a shots/ai.txt | grep -q "skin=yehang" || { echo "AI skin not applied"; fail=1; }
 adb shell input keyevent KEYCODE_BACK; sleep 1
 adb shell am start -n $P/$A --es skin chunyu --ei mode 1 > /dev/null; sleep 1
-# 参数错了（不存在的课）：不出卡片，结果回给模型，模型再回一句话
+# 参数错了（不存在的课）：什么都没改，结果回给模型，模型再回一句话
 adb logcat -c
 adb shell am start -n $P/$A --es aisay "删掉那门课" > /dev/null; aiwait "AISAY DONE"
 adb logcat -d -s ZhishiTest | grep "AISAY" | tee -a shots/ai.txt | grep -q "AISAY BOT 好的" || { echo "AI tool-error round trip failed"; fail=1; }
@@ -331,6 +332,134 @@ adb shell am start -n $P/$A --es aiquote none > /dev/null
 go table:0; sleep 2
 tapDesc "AI 助手"; shot 13-ai-sheet-open 3
 adb shell input keyevent KEYCODE_BACK; sleep 1
+# 自定义撤回：一轮里 加课 → 改它的教室（第二轮，用返回的 id）→ 加待办；弹一次「已改好 3 处 · 撤销」；
+# 打开撤销列表，只勾「加课」→ 依赖：「改教室」自动一起勾上；撤销所选 → 课没了，待办还在
+adb logcat -c
+adb shell am start -n $P/$A --ez aireset true --es aisay "周三第5-6节加一门机器学习，顺便记个预习" > /dev/null
+aiwait "AISAY DONE"; sleep 1; shot 15-undo-prompt 1
+adb logcat -d -s ZhishiTest | grep "AISAY" | tee shots/undo.txt
+grep -q "AISAY CARD 新增课程：机器学习 / 修改课程：机器学习 / 新增待办：预习机器学习 state=1 n=3" shots/undo.txt || { echo "multi-change batch missing"; fail=1; }
+onScreen "已改好 3 处" || { echo "undo prompt (3) missing"; fail=1; }
+adb shell am start -n $P/$A --ez undosheet true > /dev/null; sleep 3; shot 15-undo-list 1
+adb shell am start -n $P/$A --es undopick 0 > /dev/null; sleep 2; shot 15-undo-selective 1
+adb shell am start -n $P/$A --ez undorun true > /dev/null; aiwait "UNDORUN"; sleep 2; shot 15-undo-done 1
+adb logcat -d -s ZhishiTest | grep "UNDO\|AISTATE" | tee -a shots/undo.txt
+grep -q "UNDOSEL \[0, 1\]" shots/undo.txt || { echo "undo dependency (add → edit) not auto-selected"; fail=1; }
+grep -q "UNDORUN undone=\[0, 1\]" shots/undo.txt || { echo "selective undo failed"; fail=1; }
+grep "AISTATE" shots/undo.txt | tail -1 | grep -q "机器学习@" && { echo "selective undo left the course"; fail=1; }
+grep "AISTATE" shots/undo.txt | tail -1 | grep -q "预习机器学习" || { echo "selective undo removed the unselected todo"; fail=1; }
+adb shell input keyevent KEYCODE_BACK; sleep 1; adb shell input keyevent KEYCODE_BACK; sleep 1
+
+# ---------- 待办小部件：放到桌面，量刷新延迟（WLAT：从改动到桌面取到新行） ----------
+R=com.zhishi.timetable.TestHookReceiver
+bc() { adb shell am broadcast -n $P/$R "$@" > /dev/null; }
+tapRe() {
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
+  local b; b=$(adb shell cat /sdcard/ui.xml | tr '>' '\n' | grep -iE "text=\"$1" | head -1 | sed -nE 's/.*bounds="\[([0-9]+),([0-9]+)\]\[([0-9]+),([0-9]+)\]".*/\1 \2 \3 \4/p')
+  if [ -n "$b" ]; then local x1 y1 x2 y2; read -r x1 y1 x2 y2 <<< "$b"; adb shell input tap $(( (x1+x2)/2 )) $(( (y1+y2)/2 )); return 0; fi; return 1
+}
+wwait() { for i in $(seq 1 $(( ${2:-20} * 4 ))); do adb logcat -d -s ZhishiTest | grep -qE "$1" && return 0; sleep 0.25; done; return 1; }
+adb shell am start -n $P/$A --ez wpin true > /dev/null; sleep 5; shot 16-widget-pin-dialog 0
+tapRe "Add to home screen" || tapRe "ADD AUTOMATICALLY" || tapRe "ADD" || tapRe "Add" || echo "pin button not found"
+sleep 5; adb shell input keyevent KEYCODE_HOME; sleep 4; shot 16-widget-on-home 0
+adb shell dumpsys appwidget | grep -q "TodoWidget4" || echo "todo widget provider not listed"
+wlat() {  # $1 标签  $2 等什么  其余 = 广播参数（桌面在前台）
+  local tag=$1; local want=$2; shift 2
+  adb logcat -c; bc "$@"; shot "16-wlat-$tag" 1
+  wwait "$want" 20 || echo "wlat $tag: timeout"
+  adb logcat -d -s ZhishiTest | grep WLAT | tee "shots/wlat-$tag.txt" | sed 's/^.*WLAT/WLAT/'
+  echo "WLAT RESULT $tag: $(grep -E "$want" "shots/wlat-$tag.txt" | head -1 | grep -oE '\+[0-9]+ms')" | tee -a shots/wlat.txt
+}
+sleep 5
+wlat add "WLAT row" --es wlat "LAT-A1"
+sleep 3; wlat add2 "WLAT row" --es wlat "LAT-A2"
+sleep 30; wlat addcold "WLAT row" --es wlat "LAT-A3"
+sleep 3; wlat edit "WLAT row" --es wlatedit "LAT-E1"
+sleep 3; wlat done "has=false" --es wlatdone "LAT-A2"
+# 在 App 里加，回到桌面
+adb logcat -c
+adb shell am start -n $P/$A --es open todo --es wlat "LAT-B1" > /dev/null; sleep 3
+bc --es wlatmark "LAT-B1"; adb shell input keyevent KEYCODE_HOME; shot 16-wlat-inapp 1
+wwait "WLAT row" 20 || echo "wlat inapp: timeout"
+adb logcat -d -s ZhishiTest | grep WLAT | tee shots/wlat-inapp.txt | sed 's/^.*WLAT/WLAT/'
+echo "WLAT RESULT inapp(from HOME): $(grep 'WLAT row' shots/wlat-inapp.txt | tail -1 | grep -oE '\+[0-9]+ms')" | tee -a shots/wlat.txt
+
+# ---------- MCP 端到端（线上的 https://mcp.xingjunyue.top；注册一个临时用户，最后删掉） ----------
+MCP=https://mcp.xingjunyue.top/mcp
+adb logcat -c
+adb shell am start -n $P/$A --ez cloudon true > /dev/null
+aiwait "CLOUD ON" || true; sleep 1
+adb logcat -d -s ZhishiTest | grep "CLOUD" | tee shots/mcp.txt
+if grep -q "CLOUD ON ok" shots/mcp.txt; then
+  adb logcat -c
+  adb shell am start -n $P/$A --es cloudtoken "CI 智能体" > /dev/null; aiwait "CLOUD TOKEN"
+  adb logcat -d -s ZhishiTest | grep "CLOUD" | tee -a shots/mcp.txt
+  adb pull /sdcard/Android/data/$P/files/agent.txt out/agent.txt > /dev/null 2>&1
+  TOK=$(cat out/agent.txt 2>/dev/null)
+  go me_mcp; shot 15-mcp-page 4
+  onScreen "带令牌的链接" || { echo "MCP page: token reveal missing"; fail=1; }
+  adb shell input swipe 540 1900 540 600 400; shot 15-mcp-page-b 2
+  adb shell input swipe 540 1900 540 600 400; shot 15-mcp-page-c 2
+  rpc() { curl -s -X POST "$MCP" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -H 'MCP-Protocol-Version: 2025-06-18' -d "$1"; }
+  DUE="$(date -u -d tomorrow +%F) 18:00"
+  # 先回桌面（App 不在前台就不会自己每分钟同步，下面那次同步才是第一次拉到智能体的改动）
+  adb shell input keyevent KEYCODE_HOME; sleep 2
+  rpc '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"zhishi-ci","version":"1"}}}' > shots/mcp-init.json
+  python3 -c "import json;d=json.load(open('shots/mcp-init.json'));assert d['result']['serverInfo']['name']=='zhishi-cloud';print('MCP init ok',d['result']['protocolVersion'])" || { echo "MCP initialize failed"; cat shots/mcp-init.json; fail=1; }
+  rpc '{"jsonrpc":"2.0","method":"notifications/initialized"}' > /dev/null
+  rpc '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"add_todo","arguments":{"title":"MCP 智能体加的待办","due":"'"$DUE"'","remind":true,"remind_before_minutes":30}}}' > shots/mcp-add-todo.json
+  rpc '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_course","arguments":{"name":"MCP 课程","weekdays":[2],"start_period":9,"end_period":10,"room":"云端101"}}}' > shots/mcp-add-course.json
+  TID=$(python3 -c "import json;d=json.load(open('shots/mcp-add-todo.json'));assert not d['result'].get('isError');print(d['result']['structuredContent']['todo']['id'])") || { echo "MCP add_todo failed"; cat shots/mcp-add-todo.json; fail=1; }
+  CID=$(python3 -c "import json;d=json.load(open('shots/mcp-add-course.json'));assert not d['result'].get('isError');print(d['result']['structuredContent']['course']['id'])") || { echo "MCP add_course failed"; cat shots/mcp-add-course.json; fail=1; }
+  echo "MCP added todo=$TID course=$CID" | tee -a shots/mcp.txt
+  # 桌面在前台时同步（和后台 / 前台轮询一样的路径）：量小部件多久出现智能体加的待办
+  adb logcat -c
+  bc --es wlatmark "MCP 智能体加的待办"; bc --ez cloudsync true
+  wwait "CLOUD SYNC" 30; wwait "WLAT row" 15 || echo "MCP todo not fetched by the widget"
+  shot 15-mcp-widget 2
+  adb logcat -d -s ZhishiTest | grep "CLOUD\|WLAT" | tee -a shots/mcp.txt
+  echo "WLAT RESULT mcp-pull: $(grep 'WLAT row' shots/mcp.txt | head -1 | grep -oE '\+[0-9]+ms')" | tee -a shots/wlat.txt
+  grep -q "CLOUD SYNC ok .*agent=2 banner=.*n=2" shots/mcp.txt || { echo "agent changes not pulled"; fail=1; }
+  grep -q "WLAT row" shots/mcp.txt || { echo "agent todo not in widget"; fail=1; }
+  adb logcat -c
+  adb shell am start -n $P/$A --ez aistate true > /dev/null; sleep 2
+  adb logcat -d -s ZhishiTest | grep "AISTATE" | tail -1 | tee -a shots/mcp.txt > shots/mcp-state.txt
+  grep -q "MCP 智能体加的待办" shots/mcp-state.txt || { echo "agent todo not in app"; fail=1; }
+  grep -q "MCP 课程@2" shots/mcp-state.txt || { echo "agent course not in app"; fail=1; }
+  go todo; shot 15-mcp-todo-list 3
+  onScreen "MCP 智能体加的待办" || { echo "agent todo not in the to-do list"; fail=1; }
+  shot 15-mcp-banner 0
+  # 撤销智能体的改动（底部提示 → 撤销列表 → 全部撤销）：服务器上删掉，手机上也没了
+  adb shell am start -n $P/$A --ez undosheet true --es undofor agent > /dev/null; sleep 3; shot 15-mcp-undo-list 1
+  adb shell input keyevent KEYCODE_BACK; sleep 1
+  adb logcat -c
+  adb shell am start -n $P/$A --ez cloudundo true > /dev/null; aiwait "CLOUD UNDO"; sleep 2
+  adb logcat -d -s ZhishiTest | grep "CLOUD\|AISTATE" | tee -a shots/mcp.txt
+  grep -q "CLOUD UNDO done=2 err=null" shots/mcp.txt || { echo "agent undo failed"; fail=1; }
+  grep "AISTATE" shots/mcp.txt | tail -1 | grep -q "MCP 智能体加的待办\|MCP 课程" && { echo "agent changes still in app after undo"; fail=1; }
+  rpc '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_todos","arguments":{"status":"all"}}}' > shots/mcp-after-undo-todos.json
+  rpc '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_courses","arguments":{}}}' > shots/mcp-after-undo-courses.json
+  python3 - "$TID" "$CID" <<'PYEOF' || { echo "undo not reflected on the server"; fail=1; }
+import json, sys
+t = json.load(open('shots/mcp-after-undo-todos.json'))['result']['structuredContent']
+c = json.load(open('shots/mcp-after-undo-courses.json'))['result']['structuredContent']
+ids = [x['id'] for x in t['todos']]; cids = [x['id'] for x in c.get('courses', [])]
+assert sys.argv[1] not in ids, ids
+assert sys.argv[2] not in cids, cids
+print('server after undo: todos', len(ids), 'courses', len(cids), '(agent items gone)')
+PYEOF
+  go table:0; sleep 1
+  # 最后删掉这个临时用户：令牌随之失效
+  adb logcat -c
+  adb shell am start -n $P/$A --ez clouddelete true > /dev/null; aiwait "CLOUD DELETED"
+  adb logcat -d -s ZhishiTest | grep "CLOUD" | tee -a shots/mcp.txt | grep -q "CLOUD DELETED ok token=false" || { echo "account delete failed"; fail=1; }
+  code=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$MCP" -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -H 'Accept: application/json' -d '{"jsonrpc":"2.0","id":9,"method":"tools/list"}')
+  echo "MCP after account delete: HTTP $code" | tee -a shots/mcp.txt
+  [ "$code" = "401" ] || { echo "token still works after DELETE /v1/account"; fail=1; }
+  rm -f out/agent.txt
+else
+  echo "cloud enable failed"; fail=1
+fi
 # 离线语音输入（sherpa-onnx）：输入框旁边的麦克风、没模型时按一下弹「下载语音模型」框（这里不点下载）、下载进度（假的）、
 # 按住说话的样子（假的识别文字）、上滑取消的样子、松开后字留在输入框里（不自动发送）
 adb shell am start -n $P/$A --ez aireset true --ez asrdelete true --ez asrstate true > /dev/null; sleep 2

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """冒烟测试用的假 OpenAI 兼容接口（不是真的模型）：只认 /v1/models 和 /v1/chat/completions。
 - 带图片的请求 → 固定的课表 JSON（含周次、单双周）
-- 最后一条是工具结果 → 一句文字
+- 最后一条是工具结果 → 一句文字（AI 的改动马上生效：「已改好」；出错：「好的…没找到」）；
+  用户说「顺便」且刚加了课 → 第二轮用返回的 id 改这门课的教室 + 加一条待办（测一轮多处改动、撤销的依赖）
 - 带引用（「[用户在回复这条消息…」开头）→ 回一句带着引用原文的话
 - 用户说「机器学习」→ add_course；「待办」→ add_todo；「皮肤」→ set_skin；「删」→ delete_course；其他 → 回答周二的课
 用法：fake_ai.py 端口"""
@@ -20,9 +21,10 @@ def reply(msg, finish="stop"):
     return {"id": "fake", "object": "chat.completion", "choices": [{"index": 0, "message": msg, "finish_reason": finish}]}
 
 
-def call(name, args):
-    return reply({"role": "assistant", "content": "我准备好了，请确认。", "tool_calls": [
-        {"id": "call_1", "type": "function", "function": {"name": name, "arguments": json.dumps(args, ensure_ascii=False)}}]}, "tool_calls")
+def call(name, args, *more):
+    calls = [(name, args)] + list(more)
+    return reply({"role": "assistant", "content": None, "tool_calls": [
+        {"id": "call_%d" % i, "type": "function", "function": {"name": n, "arguments": json.dumps(a, ensure_ascii=False)}} for i, (n, a) in enumerate(calls, 1)]}, "tool_calls")
 
 
 class H(BaseHTTPRequestHandler):
@@ -47,7 +49,15 @@ class H(BaseHTTPRequestHandler):
             if "What word" in json.dumps(msgs, ensure_ascii=False): return self.send(200, reply({"role": "assistant", "content": "OK"}))
             return self.send(200, reply({"role": "assistant", "content": "```json\n" + json.dumps(COURSES, ensure_ascii=False) + "\n```"}))
         last = msgs[-1] if msgs else {}
-        if last.get("role") == "tool": return self.send(200, reply({"role": "assistant", "content": "好的。"}))
+        if last.get("role") == "tool":
+            users = [m.get("content") for m in msgs if m.get("role") == "user" and isinstance(m.get("content"), str)]
+            u = users[-1] if users else ""
+            tool = last.get("content") or ""
+            if tool.startswith("error"): return self.send(200, reply({"role": "assistant", "content": "好的，没找到那门课，没有改动。"}))
+            if "顺便" in u and "added course id=" in tool:
+                cid = tool.split("added course id=", 1)[1].split()[0].strip(" ()")
+                return self.send(200, call("update_course", {"id": cid, "room": "B303"}, ("add_todo", {"title": "预习机器学习", "due": "2030-01-01 20:00"})))
+            return self.send(200, reply({"role": "assistant", "content": "已改好。"}))
         text = last.get("content") if isinstance(last.get("content"), str) else ""
         if body.get("tools") is None: return self.send(200, reply({"role": "assistant", "content": "OK"}))
         # 回复某一条（引用）：回一句带着引用原文的话，冒烟测试据此确认引用真的发给了模型
