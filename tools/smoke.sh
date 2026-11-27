@@ -331,6 +331,38 @@ adb shell am start -n $P/$A --es aiquote none > /dev/null
 go table:0; sleep 2
 tapDesc "AI 助手"; shot 13-ai-sheet-open 3
 adb shell input keyevent KEYCODE_BACK; sleep 1
+# 离线语音输入（sherpa-onnx）：输入框旁边的麦克风、没模型时按一下弹「下载语音模型」框（这里不点下载）、下载进度（假的）、
+# 按住说话的样子（假的识别文字）、上滑取消的样子、松开后字留在输入框里（不自动发送）
+adb shell am start -n $P/$A --ez aireset true --ez asrdelete true --ez asrstate true > /dev/null; sleep 2
+adb shell am start -n $P/$A --ez aisheet true > /dev/null; shot 14-voice-sheet-mic 3
+onScreen 'content-desc="按住说话"' || { echo "mic button missing"; fail=1; }
+tapDesc "按住说话"; shot 14-voice-download-dialog 3
+onScreen "下载语音模型" || { echo "voice download dialog missing"; fail=1; }
+adb shell input keyevent KEYCODE_BACK; sleep 1
+adb shell am start -n $P/$A --ei asrprog 9 --ez asrdialog true > /dev/null; shot 14-voice-download-progress 3
+adb shell input keyevent KEYCODE_BACK; sleep 1
+adb shell am start -n $P/$A --ez asrdelete true > /dev/null; sleep 1
+adb shell am start -n $P/$A --es asrpartial "明天下午三点交线代作业" > /dev/null; shot 14-voice-recording 3
+adb shell am start -n $P/$A --es asrpartial "明天下午三点交线代作业" --ez asrarmed true > /dev/null; shot 14-voice-cancel-armed 2
+adb shell am start -n $P/$A --ez asrstop true > /dev/null; shot 14-voice-text-in-input 2
+onScreen "明天下午三点交线代作业" || { echo "voice text not in input box"; fail=1; }
+adb logcat -d -s ZhishiTest | grep "ASR STATE" | tail -1
+# 真模型（21MB，CI 上下载很快）：App 里走「主地址连不上 → 换下一个地址 → 校验 sha256 → 解包」，再用模型自带的测试音频识别一遍
+asrwait() { for i in $(seq 1 ${2:-90}); do sleep 1; adb logcat -d -s ZhishiTest | grep -q "$1" && return 0; done; echo "timeout waiting for $1"; return 1; }
+asrtest() {  # $1 = 标签（debug / qa）
+  adb shell mkdir -p /sdcard/Android/data/$P/files; adb push out/asr.tar.bz2 /sdcard/Android/data/$P/files/asr.tar.bz2 > /dev/null; adb push out/asr0.wav /sdcard/Android/data/$P/files/asr0.wav > /dev/null
+  adb shell am start -n $P/$A --es asrinstall asr.tar.bz2 > /dev/null; asrwait "ASR INSTALL" 120
+  adb logcat -d -s ZhishiTest | grep "ASR INSTALL" | tee -a shots/asr-$1.txt | grep -q "ASR INSTALL READY err=null source=1 installed=true" || { echo "[$1] voice model install failed"; fail=1; }
+  adb shell am start -n $P/$A --es asrwav asr0.wav > /dev/null; asrwait "ASR \(TEXT\|FAIL\)" 60
+  adb logcat -d -s ZhishiTest | grep "ASR TEXT\|ASR FAIL" | tee -a shots/asr-$1.txt | grep -q "ASR TEXT .*介绍.*研究" || { echo "[$1] voice recognition failed"; fail=1; }
+}
+if curl -sfL --retry 3 -o out/asr.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2 \
+   && python3 -c "import tarfile;t=tarfile.open('out/asr.tar.bz2');m=[m for m in t.getmembers() if m.name.endswith('test_wavs/0.wav')][0];open('out/asr0.wav','wb').write(t.extractfile(m).read())"; then
+  asrtest debug
+  go ai_settings; sleep 2; adb shell input swipe 540 1900 540 300 400; adb shell input swipe 540 1900 540 300 400; shot 14-voice-settings-installed 2
+  onScreen "删除语音模型" || { echo "voice settings: delete button missing"; fail=1; }
+  go table:0; sleep 1
+else echo "voice model download skipped (network)"; HAVE_ASR=no; fi
 go table:8; shot 12-import-menu-ai 3
 go table:0; sleep 1
 kill $FA 2>/dev/null
@@ -359,5 +391,12 @@ if crashed; then echo "CRASH (release)"; adb logcat -d -b crash | tee shots/cras
 adb logcat -d > shots/logcat.txt
 # 崩溃排查（build-17）：混淆后的 qa 包上按各种时刻 / 老数据 / 强制更新弹窗冷启动、走两个导入入口
 QUICK=1 bash tools/crashhunt.sh out/test-qa.apk qa || fail=1
+# 混淆后的 qa 包上再跑一遍离线语音（JNI 按名字读 sherpa-onnx 的类，keep 规则不对会在这里崩）
+if [ "${HAVE_ASR:-yes}" = yes ]; then
+  adb install -r -g out/test-qa.apk > /dev/null; adb logcat -c
+  adb shell am start -n $P/$A --ez seed true > /dev/null; sleep 6
+  asrtest qa
+  if adb logcat -d -b crash | grep -q "$P"; then echo "CRASH (qa voice)"; adb logcat -d -b crash | tee shots/crash-qa-voice.txt; fail=1; fi
+fi
 echo "smoke fail=$fail"
 exit $fail

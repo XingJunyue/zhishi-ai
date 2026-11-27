@@ -5,3 +5,6 @@ local.properties
 *.jks
 *.keystore
 *.p12.enc
+# 构建时下载的 sherpa-onnx AAR（app/build.gradle.kts）
+app/libs/*.aar
+app/libs/*.part

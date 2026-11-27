@@ -158,3 +158,22 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
+
+## sherpa-onnx（k2-fsa）— Apache License 2.0
+- 来源：https://github.com/k2-fsa/sherpa-onnx ，版本 v2.0.3 的 Android AAR `sherpa-onnx-static-link-onnxruntime-2.0.3.aar`（sha256 `7744a3a8f08f017d59c2d8ed8d9b700345561f5abe9f4e06dc6eaef3a0b977b4`），构建时下载，不在仓库里。
+- 用在：AI 助手的离线语音输入（`Voice.kt`）：流式识别 API（`com.k2fsa.sherpa.onnx.OnlineRecognizer` 等）和 JNI 库 `libsherpa-onnx-jni.so`（只打包 arm64-v8a、armeabi-v7a）。
+- 这个 AAR 静态链接了 ONNX Runtime（Microsoft，MIT License，https://github.com/microsoft/onnxruntime ）。
+- Copyright (c) 2022-2026 Xiaomi Corporation and the k2-fsa / sherpa-onnx contributors. Licensed under the Apache License, Version 2.0: https://www.apache.org/licenses/LICENSE-2.0
+- ONNX Runtime: Copyright (c) Microsoft Corporation. MIT License.
+
+## 中文语音识别模型 sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01 — Apache License 2.0
+- 来源：k2-fsa 发布的 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2
+  （21,264,113 字节，sha256 `b3b309f7ce4a737195fcc6963ea19b0653a7d3401580af5ae0d3e284cbb71f0b`）；知时 AI 仓库的 release `asr-model` 里放了同一个文件作镜像。
+- 许可：模型卡标注 Apache-2.0（https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01 ，
+  PyTorch 原模型 https://huggingface.co/csukuangfj/icefall-streaming-zipformer-small-ctc-zh-2025-04-01 也是 Apache-2.0），允许商用。训练代码来自 k2-fsa/icefall（Apache-2.0）。
+- 不打进安装包：用户第一次用语音输入时下载到 App 私有目录，只取 `model.int8.onnx`、`tokens.txt` 两个文件，没有修改。
+
+## Apache Commons Compress — Apache License 2.0
+- 来源：https://commons.apache.org/proper/commons-compress/ （Maven `org.apache.commons:commons-compress:1.24.0`）
+- 用在：`Asr.kt` 解语音模型包（.tar.bz2）。
+- Copyright 2002-2023 The Apache Software Foundation. Licensed under the Apache License, Version 2.0.

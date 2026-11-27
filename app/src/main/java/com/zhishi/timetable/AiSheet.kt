@@ -323,6 +323,12 @@ fun AiChatBody(modifier: Modifier, inSheet: Boolean = true) {
     // 撤销条出现 / 消失时列表变矮 / 变高：重新滚到底，免得最后一张卡片的底部（撤销）被截掉
     LaunchedEffect(items.size, AiChat.busy.value, AiChat.toast.value != null) { if (items.isNotEmpty()) { delay(50); list.animateScrollToItem(items.size) } }
     LaunchedEffect(AiChat.toast.value) { if (AiChat.toast.value != null) { delay(6000); AiChat.toast.value = null } }
+    // 语音输入：识别出来的字实时接在原来的字后面（不自动发送）；上滑取消就还原
+    val vActive = Voice.active
+    LaunchedEffect(Voice.live.value, vActive) { if (vActive) input = VoiceFlow.merge(Voice.prefix, Voice.live.value) }
+    val cancel0 = remember { Voice.cancelled.value }
+    LaunchedEffect(Voice.cancelled.value) { if (Voice.cancelled.value != cancel0) input = Voice.prefix }
+    DisposableEffect(Unit) { onDispose { if (Voice.active) Voice.stop(commit = false) } }
 
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val reply: (ChatItem) -> Unit = { AiChat.replyTo.value = it }
@@ -352,14 +358,18 @@ fun AiChatBody(modifier: Modifier, inSheet: Boolean = true) {
         }
         // 引用条：正在回复哪一条（点 ✕ 不回复了）
         AiChat.replyTo.value?.let { r -> AiChat.quoteOf(r)?.let { q -> ReplyBar(q) { AiChat.replyTo.value = null } } }
-        // 输入：附图 + 文字 + 发送
+        // 按住说话时的提示条（正在听 / 松开取消）
+        VoiceBar()
+        // 输入：附图 + 文字 + 麦克风（按住说话） + 发送
         Row(Modifier.fillMaxWidth().then(if (inSheet) Modifier.navigationBarsPadding() else Modifier).padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(42.dp).glassButton(CircleShape, shadow = 0.dp) { attach() }, contentAlignment = Alignment.Center) { ImageGlyph(C.Ink) }
             Box(Modifier.weight(1f).padding(horizontal = 8.dp).liquidGlass(RoundedCornerShape(21.dp), fill = Glass.field(), shadow = 0.dp).padding(horizontal = 14.dp, vertical = 11.dp)) {
                 if (input.isEmpty()) Text(if (ready) tr("说说要改什么，或者问问课表") else tr("先在「设置」里填好 AI 接口"), fontSize = 14.sp, color = C.Faint, maxLines = 1)
                 BasicTextField(input, { input = it }, maxLines = 4, cursorBrush = SolidColor(C.Clay), textStyle = TextStyle(fontSize = 14.sp, color = C.Ink), modifier = Modifier.fillMaxWidth())
             }
-            val can = input.isNotBlank() && AiChat.busy.value == null
+            MicButton(enabled = true, toast = { t -> AiChat.toastUndo.value = false; AiChat.toast.value = t }, inputNow = { input })
+            Spacer(Modifier.width(8.dp))
+            val can = input.isNotBlank() && AiChat.busy.value == null && !Voice.active
             Box(Modifier.size(42.dp).glassButton(CircleShape, tint = C.Clay, fill = if (can) C.Clay.copy(alpha = 0.85f) else C.Track.copy(alpha = 0.6f), shadow = 0.dp, enabled = can) {
                 val t = input; input = ""; scope.launch { AiChat.say(c, t) }
             }, contentAlignment = Alignment.Center) { Text("↑", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = if (can) C.OnClay else C.Faint, style = androidx.compose.material3.LocalTextStyle.current.copy(shadow = null)) }

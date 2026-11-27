@@ -17,7 +17,7 @@ class TourAndUpdaterTest {
             assertEquals("preview", Updater.lastError)
         }
         assertEquals("XingJunyue/zhishi-ai", Updater.REPO)
-        assertEquals("aichats", Tour.WHATS_NEW.first().id)
+        assertEquals("voice", Tour.WHATS_NEW.first().id)
     }
 
     @Test fun firstRunVsUpgrade() {

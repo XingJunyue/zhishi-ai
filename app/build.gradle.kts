@@ -2,6 +2,27 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// 离线语音输入：sherpa-onnx（k2-fsa，Apache-2.0）的 Android AAR（静态链接 onnxruntime）。
+// 文件太大不进仓库：构建时从 k2-fsa 的 GitHub release 下载到 app/libs/，核对 sha256（不对就删掉报错）。
+val sherpaVer = "2.0.3"
+val sherpaAar = file("libs/sherpa-onnx-static-link-onnxruntime-$sherpaVer.aar")
+val sherpaSha = "7744a3a8f08f017d59c2d8ed8d9b700345561f5abe9f4e06dc6eaef3a0b977b4"
+fun sha256Of(f: File): String {
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    f.inputStream().use { i -> val b = ByteArray(1 shl 16); while (true) { val n = i.read(b); if (n < 0) break; md.update(b, 0, n) } }
+    return md.digest().joinToString("") { "%02x".format(it) }
+}
+if (!sherpaAar.isFile || sha256Of(sherpaAar) != sherpaSha) {
+    sherpaAar.parentFile.mkdirs()
+    val tmp = File(sherpaAar.path + ".part")
+    val url = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVer/${sherpaAar.name}"
+    println("downloading $url")
+    java.net.URL(url).openStream().use { i -> tmp.outputStream().use { o -> i.copyTo(o) } }
+    val got = sha256Of(tmp)
+    if (got != sherpaSha) { tmp.delete(); throw GradleException("sherpa-onnx aar sha256 mismatch: $got") }
+    sherpaAar.delete(); tmp.renameTo(sherpaAar)
+}
 android {
     namespace = "com.zhishi.timetable"
     compileSdk = 36
@@ -53,6 +74,8 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
+    // so 在安装包里压缩存放（默认不压缩，sherpa-onnx 的 so 会让安装包大 2 倍多）
+    packaging { jniLibs { useLegacyPackaging = true } }
     packaging { resources { excludes += listOf("META-INF/versions/9/OSGI-INF/MANIFEST.MF", "META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*") } }
     buildFeatures { compose = true; buildConfig = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
@@ -69,6 +92,9 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("org.jsoup:jsoup:1.17.2")
     // 截图识别改由用户设置的 AI 看图模型做（AiRecognize.kt），不再带 ML Kit
+    // 离线语音输入：sherpa-onnx（见文件开头）+ 解模型包（.tar.bz2）用的 Commons Compress（Apache-2.0）
+    implementation(files(sherpaAar))
+    implementation("org.apache.commons:commons-compress:1.24.0")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }

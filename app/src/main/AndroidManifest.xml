@@ -12,6 +12,8 @@
     <!-- Android 13+：装上即有精确闹钟权限（不走应用商店，不受 Play 政策限制）；小米等手机默认不给 SCHEDULE_EXACT_ALARM -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- AI 助手的离线语音输入：按住麦克风说话时录音（第一次用时才申请；声音只在手机上识别，不上传、不保存） -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:name=".ZhishiApp"
         android:allowBackup="false"

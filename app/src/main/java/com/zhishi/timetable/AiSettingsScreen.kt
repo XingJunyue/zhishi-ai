@@ -129,6 +129,8 @@ fun AiSettingsScreen() {
         }
         busy?.let { Text(it, fontSize = 13.sp, color = C.Soft, modifier = Modifier.padding(top = 12.dp, start = 6.dp)) }
         result?.let { Note(it, warm = warn) }
+        // 离线语音输入的模型（和接口无关；以后去掉 BYO 这一页时把它挪到别处）
+        VoiceSettings()
         Spacer(Modifier.height(18.dp))
         Text(tr("清除 AI 设置"), fontSize = 13.sp, color = C.Faint, modifier = Modifier.align(Alignment.CenterHorizontally).clip(RoundedCornerShape(10.dp)).clickable {
             Ai.store(c).clear(); OpenAiCompatClient.forget(); Ai.ver.value++

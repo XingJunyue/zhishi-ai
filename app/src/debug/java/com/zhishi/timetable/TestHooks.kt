@@ -102,6 +102,42 @@ object TestHooks {
         }
         if (i.getBooleanExtra("aiundo", false)) { AiChat.undo(c); Log.i("ZhishiTest", "AIUNDO ${AiChat.toast.value}"); logState(c) }
         if (i.getBooleanExtra("aistate", false)) logState(c)
+        voice(c, i)
+    }
+
+    /**
+     * 离线语音输入：
+     *  --ez asrdialog true          打开 AI 面板并弹「下载语音模型」框（截图）；--ei asrprog N 假装已下载 N MB（截进度）
+     *  --es asrpartial 文字         假装正在按住说话、已经识别出这些字（截提示条和输入框）；--ez asrarmed true 上滑取消的样子；--ez asrstop true 收起
+     *  --es asrinstall 文件名       用 app 专属目录里的模型包走一遍「主地址失败 → 换下一个地址 → 校验 → 解包」（主地址是本机连不上的端口），打 ASR INSTALL
+     *  --es asrwav 文件名           把 16kHz 单声道 wav 喂给识别器，打 ASR TEXT / ASR FAIL
+     *  --ez asrdelete true / --ez asrstate true
+     */
+    private fun voice(c: Context, i: Intent) {
+        if (i.getBooleanExtra("asrdelete", false)) Voice.delete(c)
+        if (i.hasExtra("asrprog")) Voice.dl.value = AsrDl(AsrDl.Phase.DOWNLOADING, i.getIntExtra("asrprog", 0) * 1_000_000L, AsrSpec.SIZE, 1)
+        if (i.getBooleanExtra("asrdialog", false)) { AiChat.show(i.getStringExtra("aitab") ?: "table"); Voice.dialog.value = "model" }
+        i.getStringExtra("asrpartial")?.let { t ->
+            AiChat.show(i.getStringExtra("aitab") ?: "table")
+            Voice.prefix = ""; Voice.recording.value = true; Voice.armed.value = i.getBooleanExtra("asrarmed", false); Voice.live.value = t
+        }
+        if (i.getBooleanExtra("asrstop", false)) Voice.stop(commit = true)
+        i.getStringExtra("asrinstall")?.let { name ->
+            val f = File(c.getExternalFilesDir(null), name)
+            val fetch = AsrFetch { u -> if (u.startsWith("file:")) AsrBody(f.length(), f.inputStream()) else Voice.HttpFetch.open(u) }
+            Voice.download(c, fetch, listOf("http://127.0.0.1:9/asr-primary-down.tar.bz2", "file://" + f.path)) { r ->
+                Log.i("ZhishiTest", "ASR INSTALL ${r.phase} err=${r.error} source=${r.source} installed=${Voice.installed(c)} bytes=${Voice.installer(c).bytes()}")
+            }
+        }
+        i.getStringExtra("asrwav")?.let { name ->
+            val f = File(c.getExternalFilesDir(null), name)
+            Thread {
+                try { val t0 = System.currentTimeMillis(); val t = Voice.decodeWav(c, f); Log.i("ZhishiTest", "ASR TEXT $t (${System.currentTimeMillis() - t0}ms)") }
+                catch (x: Throwable) { Log.i("ZhishiTest", "ASR FAIL ${x.javaClass.simpleName}: ${x.message}") }
+            }.start()
+        }
+        if (i.getBooleanExtra("asrstate", false))
+            Log.i("ZhishiTest", "ASR STATE engine=${Voice.engineOk} installed=${Voice.installed(c)} perm=${Voice.perm(c)} dl=${Voice.dl.value.phase}")
     }
 
     private fun logState(c: Context) {
