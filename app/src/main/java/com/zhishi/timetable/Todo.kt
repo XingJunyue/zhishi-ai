@@ -229,7 +229,13 @@ object TodoStore {
     private fun p(c: Context) = c.getSharedPreferences("todo", Context.MODE_PRIVATE)
     fun all(c: Context): List<Todo> = Todos.parse(p(c).getString("items", "[]"))
     /** 存下来、通知界面，并立刻重画桌面上的待办小部件（添加 / 完成 / 删除 / 从备份恢复都走这里）。 */
-    fun save(c: Context, l: List<Todo>) { p(c).edit().putString("items", Todos.toJson(l).toString()).apply(); ver.value++; CourseWidgets.refresh(c) }
+    fun save(c: Context, l: List<Todo>) {
+        p(c).edit().putString("items", Todos.toJson(l).toString()).apply(); rev.incrementAndGet(); ver.value++
+        CourseWidgets.todosChanged(c)
+        CloudSync.localChanged(c)
+    }
+    /** 待办数据的版本（每次存盘 +1）：小部件列表的 RemoteViewsFactory 拿它判断手上的快照是不是旧的。 */
+    val rev = java.util.concurrent.atomic.AtomicLong(0)
     fun put(c: Context, t: Todo) {
         val l = all(c); save(c, if (l.any { it.id == t.id }) l.map { if (it.id == t.id) t else it } else l + t)
         TodoAlarm.sync(c, t)
@@ -245,6 +251,7 @@ object TodoStore {
 /** 到点提醒：有精确闹钟权限就用精确的，没有就用不精确的（系统可能晚几分钟）。 */
 object TodoAlarm {
     const val CHANNEL = "todo"
+    const val ACTION_DONE = "com.zhishi.timetable.TODO_DONE"
     private fun pi(c: Context, id: String, create: Boolean): PendingIntent? =
         PendingIntent.getBroadcast(c, id.hashCode(), Intent(c, TodoReminder::class.java).putExtra("id", id),
             PendingIntent.FLAG_IMMUTABLE or (if (create) PendingIntent.FLAG_UPDATE_CURRENT else PendingIntent.FLAG_NO_CREATE))
@@ -291,16 +298,21 @@ object TodoAlarm {
     }
 
     /** 发一条通知（到点提醒和「测试通知」共用）。结果记进诊断。 */
-    fun post(c: Context, notifId: Int, title: String, text: String) {
+    fun post(c: Context, notifId: Int, title: String, text: String, todoId: String? = null) {
         try {
             channel(c)
             val open = PendingIntent.getActivity(c, notifId, Intent(c, MainActivity::class.java).putExtra("open", "todo")
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-            val n = android.app.Notification.Builder(c, CHANNEL)
+            val b = android.app.Notification.Builder(c, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_todo).setContentTitle(title).setContentText(text)
                 .setStyle(android.app.Notification.BigTextStyle().bigText(text))
                 .setCategory(android.app.Notification.CATEGORY_REMINDER).setShowWhen(true)
-                .setContentIntent(open).setAutoCancel(true).build()
+                .setContentIntent(open).setAutoCancel(true)
+            // 提醒上直接点「完成」：标成完成（和在待办页勾上一样，小部件马上更新），收起通知
+            if (todoId != null) b.addAction(android.app.Notification.Action.Builder(null, tr("完成"), PendingIntent.getBroadcast(c, notifId,
+                Intent(c, TodoReminder::class.java).setAction(ACTION_DONE).putExtra("id", todoId).putExtra("notif", notifId),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)).build())
+            val n = b.build()
             val nm = c.getSystemService(NotificationManager::class.java)
             if (nm == null) { log(c, "post", "no NotificationManager"); return }
             nm.notify(notifId, n)
@@ -372,6 +384,12 @@ class TodoReminder : BroadcastReceiver() {
         when (i.action) {
             // 改时间 / 改时区：全天待办的提醒（当天 8:00）按新时区重排
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> { TodoAlarm.rescheduleAll(c); return }
+            TodoAlarm.ACTION_DONE -> {
+                val id = i.getStringExtra("id") ?: return
+                TodoStore.all(c).firstOrNull { it.id == id }?.let { if (!it.done) TodoStore.toggle(c, it) }
+                c.getSystemService(android.app.NotificationManager::class.java)?.cancel(i.getIntExtra("notif", id.hashCode()))
+                return
+            }
         }
         val id = i.getStringExtra("id") ?: run { TodoAlarm.log(c, "alarm", "no id"); return }
         if (id == TodoAlarm.TEST_ID) {
@@ -388,6 +406,6 @@ class TodoReminder : BroadcastReceiver() {
         val dueLine = if (Todos.endOf(t) <= now) tr("到截止时间了") else tr("截止：{0}", dueText(t.due, t.allDay))
         val text = listOf(dueLine, t.course, t.note).filter { it.isNotBlank() }.joinToString(" · ")
         TodoAlarm.markFired(c, t)
-        TodoAlarm.post(c, id.hashCode(), t.title, text)
+        TodoAlarm.post(c, id.hashCode(), t.title, text, t.id)
     }
 }

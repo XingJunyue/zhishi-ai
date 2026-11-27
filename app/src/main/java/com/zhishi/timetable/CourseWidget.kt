@@ -36,6 +36,13 @@ object LevelTag {
  * 课表小部件：4×2 和 2×2。上面是正在上的课（课间就是最近的下一节），下面一条是再下一节；
  * 今天没课 / 课都上完了就是白底加颜文字。整张画成一张图，排版和预览图一致。
  */
+/** 测试用（只有调试 / qa 版的钩子会设 marker）：量待办小部件从改动到桌面取到新行的延迟，打到 logcat「WLAT」。 */
+object WidgetProbe {
+    @Volatile var marker: String? = null
+    @Volatile var t0 = 0L
+    fun log(what: String) { if (marker != null) android.util.Log.i("ZhishiTest", "WLAT $what +${System.currentTimeMillis() - t0}ms") }
+}
+
 object CourseWidgets {
     /** 今天的课排好后，此刻该显示什么（纯函数，单测）。 */
     data class Now(val main: Slot?, val live: Boolean, val next: Slot?, val total: Int, val index: Int, val doneAll: Boolean)
@@ -66,6 +73,7 @@ object CourseWidgets {
     private var lastSig = ""
     private var lastTodoSig = ""
     private var lastRowSig = ""
+    private var lastStructSig = ""
 
     // ---- 合并刷新 ----
     // 以前每次调用都立刻整张重画、updateAppWidget（会让桌面重新绑定待办列表、重新取每一行的图），
@@ -93,8 +101,47 @@ object CourseWidgets {
     /** 系统发来的 onUpdate（新加了小部件 / 定时）：马上按签名重画（新小部件的 id 不在签名里，一定会画）。 */
     fun refreshNow(c: Context) { try { update(c) } catch (x: Throwable) {} }
 
-    /** 可能没变的触发（打开 App、待办存盘、壁纸配色回调、桌面发来的更新 / 尺寸变化）：合并后只在签名变了时重画。 */
+    /** 可能没变的触发（打开 App、壁纸配色回调、桌面发来的更新 / 尺寸变化）：合并后只在签名变了时重画。 */
     fun refresh(c: Context) = post(c, false)
+
+    // ---- 待办改了：马上刷新 ----
+    // 以前待办存盘也走 refresh（0.3 秒去抖），头部数量变了就整个 updateAppWidget（里面带 setRemoteAdapter），紧接着 notifyAppWidgetViewDataChanged。
+    // 有的桌面收到 updateAppWidget 会重新 inflate 整个小部件、新建列表的 RemoteViewsAdapter：
+    //  - 新 adapter 连上的是同一个已经建好的 RemoteViewsFactory（系统按 Intent 复用），isCreated = true，不会再调 onDataSetChanged，
+    //    getCount / getViewAt 拿的还是工厂里上一次的快照；或者直接用桌面进程里缓存了 5 秒的旧行（RemoteViewsAdapter 的 sCachedRemoteViewsCaches）；
+    //  - 紧跟着的 notifyAppWidgetViewDataChanged 在新 view 还没 inflate 完时到达，落在旧的列表上。
+    // 结果：小部件一直停在旧内容，直到下一次刷新（下一次改待办 / 0 点）。
+    // 现在：待办一改马上（不去抖）刷新；头部只是数量 / 日期变了用 partiallyUpdateAppWidget 只换底图（不碰列表、不会重绑）；
+    // 列表工厂发现数据版本变了自己重读（TodoRows.getCount）；再在 0.7 秒、2.5 秒后补两次 notify，盖住桌面异步 inflate 的那段时间。
+    private val todoFlush = Runnable { val c = app ?: return@Runnable; try { update(c, false) } catch (x: Throwable) { android.util.Log.w("Zhishi", "待办小部件刷新失败", x) } }
+    private val renotify = Runnable { val c = app ?: return@Runnable; notifyTodoRows(c, "late") }
+    private val renotify2 = Runnable { val c = app ?: return@Runnable; notifyTodoRows(c, "late2") }
+
+    /** 待办改了（添加 / 修改 / 完成 / 删除 / 排序 / AI / 智能体同步 / 撤销 / 通知上的「完成」都走 TodoStore.save → 这里）。 */
+    fun todosChanged(c: Context) {
+        try {
+            app = c.applicationContext ?: c
+            main.removeCallbacks(todoFlush); main.post(todoFlush)
+            main.removeCallbacks(renotify); main.postDelayed(renotify, 700L)
+            main.removeCallbacks(renotify2); main.postDelayed(renotify2, 2500L)
+        } catch (x: Throwable) {}
+    }
+
+    private fun notifyTodoRows(c: Context, why: String) {
+        try {
+            val m = AppWidgetManager.getInstance(c) ?: return
+            val ids = m.getAppWidgetIds(ComponentName(c, TodoWidget4::class.java)) + m.getAppWidgetIds(ComponentName(c, TodoWidget2::class.java))
+            if (ids.isNotEmpty()) { m.notifyAppWidgetViewDataChanged(ids, R.id.list); WidgetProbe.log("notify $why") }
+        } catch (x: Throwable) {}
+    }
+
+    /** 待办小部件这次怎么更新（纯函数，单测）：FULL = 整个 updateAppWidget；HEAD = 只换头部底图；NONE = 头部不动。rows = 要不要通知列表重新取行。 */
+    data class TodoUpdate(val kind: Int, val rows: Boolean)
+    const val T_NONE = 0; const val T_HEAD = 1; const val T_FULL = 2
+    fun todoUpdate(force: Boolean, lastStruct: String, struct: String, lastHead: String, head: String, lastRows: String, rows: String): TodoUpdate {
+        val kind = when { force || struct != lastStruct -> T_FULL; head != lastHead -> T_HEAD; else -> T_NONE }
+        return TodoUpdate(kind, kind != T_NONE || rows != lastRows)
+    }
 
     /** 小部件的尺寸也算进签名：桌面改了大小才重画，同样的尺寸反复发来不重画。 */
     private fun sizesSig(c: Context, m: AppWidgetManager, ids: IntArray, wide: Boolean): String =
@@ -142,7 +189,7 @@ object CourseWidgets {
         val tSmall = m.getAppWidgetIds(ComponentName(c, TodoWidget2::class.java))
         val hasCourse = big.isNotEmpty() || small.isNotEmpty()
         val hasTodo = tBig.isNotEmpty() || tSmall.isNotEmpty()
-        if (!hasCourse && !hasTodo) { schedule(c, null); lastSig = ""; lastTodoSig = ""; lastRowSig = ""; return }
+        if (!hasCourse && !hasTodo) { schedule(c, null); lastSig = ""; lastTodoSig = ""; lastRowSig = ""; lastStructSig = ""; return }
         // 皮肤轮换（每天 / 每周）：App 没打开时也由小部件的 0 点刷新带着换
         try { SkinRotation.onTick(c) } catch (x: Throwable) {}
         val list = if (hasCourse) today(c) else emptyList()
@@ -178,18 +225,24 @@ object CourseWidgets {
             val base = "${Term.todayEpoch()}|${styleSig(c, WidgetStyle.TODO)}|${Term.desired(c).hashCode()}|${sizesSig(c, m, tBig, true)}|${sizesSig(c, m, tSmall, false)}"
             val head = "$base|${tp.list.size}|${tp.overdue}|${tp.today}|${tp.allDone}"
             val rows = "$base|${tp.list.hashCode()}|${tp.list.map { todoState(it, nowMs) }}"
-            val headDirty = force || head != lastTodoSig
-            if (headDirty) {
-                lastTodoSig = head
-                for ((ids, wide) in listOf(tBig to true, tSmall to false)) for (id in ids) {
-                    try {
-                        val o = m.getAppWidgetOptions(id)
-                        m.updateAppWidget(id, todoViews(c, id, wide, o, tp, all))
-                    } catch (x: Exception) { android.util.Log.w("Zhishi", "待办小部件画不出来：${x.message}") }
-                }
+            // 结构（有没有列表、点击去哪）变了才整个 updateAppWidget；只是数量变了只换头部底图
+            val struct = "$base|${tp.list.isEmpty()}|${tBig.joinToString()}|${tSmall.joinToString()}"
+            val u = todoUpdate(force, lastStructSig, struct, lastTodoSig, head, lastRowSig, rows)
+            WidgetProbe.log("update kind=${u.kind} rows=${u.rows}")
+            lastStructSig = struct; lastTodoSig = head; lastRowSig = rows
+            if (u.kind != T_NONE) for ((ids, wide) in listOf(tBig to true, tSmall to false)) for (id in ids) {
+                try {
+                    val o = m.getAppWidgetOptions(id)
+                    if (u.kind == T_FULL) m.updateAppWidget(id, todoViews(c, id, wide, o, tp, all))
+                    else {
+                        // 只换底图：桌面在原来的 view 上 reapply，列表和它的 adapter 不动
+                        val v = RemoteViews(c.packageName, R.layout.widget_todo)
+                        synchronized(this) { v.setImageViewBitmap(R.id.canvas, drawTodo(c, wide, o, tp, all, rows = false)) }
+                        m.partiallyUpdateAppWidget(id, v)
+                    }
+                } catch (x: Exception) { android.util.Log.w("Zhishi", "待办小部件画不出来：${x.message}") }
             }
-            if (headDirty || rows != lastRowSig) {
-                lastRowSig = rows
+            if (u.rows) {
                 // 列表里的每一行由 TodoWidgetService 提供：通知桌面重新取一遍
                 try { m.notifyAppWidgetViewDataChanged(tBig + tSmall, R.id.list) } catch (x: Exception) { android.util.Log.w("Zhishi", "待办列表刷新失败：${x.message}") }
             }
@@ -935,6 +988,8 @@ class TodoWidgetService : RemoteViewsService() {
 
 class TodoRows(private val c: Context, private val id: Int, private val wide: Boolean) : RemoteViewsService.RemoteViewsFactory {
     @Volatile private var tp: CourseWidgets.TodoNow? = null
+    /** 这份快照对应的待办数据版本（TodoStore.rev）：桌面复用已经建好的工厂、没调 onDataSetChanged 时，getCount 发现旧了自己重读。 */
+    @Volatile private var rev = -1L
     private var all: List<Slot> = emptyList()
     private var opts: Bundle? = null
     /** 刚建好就读一次（有的桌面先问行数再发 onDataSetChanged），之后每次 onDataSetChanged 重读。 */
@@ -942,13 +997,15 @@ class TodoRows(private val c: Context, private val id: Int, private val wide: Bo
     /** 桌面收到 notifyAppWidgetViewDataChanged 后在这里重新读待办（binder 线程，可以做重活）。行数和每一行都来自同一份快照。 */
     override fun onDataSetChanged() = load()
     private fun load() {
+        rev = TodoStore.rev.get()
         try {
             all = Term.desired(c).filter { it.kind == "course" }
             opts = if (id == AppWidgetManager.INVALID_APPWIDGET_ID) null else AppWidgetManager.getInstance(c)?.getAppWidgetOptions(id)
             tp = CourseWidgets.todoPlan(TodoStore.all(c), System.currentTimeMillis())
+            WidgetProbe.marker?.let { m -> WidgetProbe.log("load id=$id n=${tp?.list?.size} has=${tp?.list?.any { it.title == m }}") }
         } catch (x: Throwable) { tp = null; android.util.Log.w("Zhishi", "待办列表读不出来：${x.message}") }
     }
-    override fun getCount(): Int = tp?.list?.size ?: 0
+    override fun getCount(): Int { if (rev != TodoStore.rev.get()) load(); return tp?.list?.size ?: 0 }
     override fun getViewAt(pos: Int): RemoteViews {
         val v = RemoteViews(c.packageName, R.layout.widget_todo_row)
         val p = tp
@@ -957,6 +1014,7 @@ class TodoRows(private val c: Context, private val id: Int, private val wide: Bo
         val bmp = if (p == null || t == null) CourseWidgets.blank else try { CourseWidgets.todoRowBitmap(c, wide, opts, t, p.now, all, pos == p.list.size - 1) }
             catch (x: Throwable) { android.util.Log.w("Zhishi", "待办列表这一行画不出来：${x.message}"); CourseWidgets.blank }
         v.setImageViewBitmap(R.id.row, bmp)
+        if (t != null && t.title == WidgetProbe.marker) WidgetProbe.log("row id=$id pos=$pos")
         v.setOnClickFillInIntent(R.id.row_root, CourseWidgets.rowFillIn())
         return v
     }

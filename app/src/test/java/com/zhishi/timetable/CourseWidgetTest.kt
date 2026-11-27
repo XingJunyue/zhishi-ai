@@ -7,6 +7,20 @@ class CourseWidgetTest {
     private fun s(n: String, f: Int, t: Int) = Slot(n, n, setOf(1), f, t)
     private val day = listOf(s("英语", 840, 935), s("高数", 610, 705), s("物理", 480, 575))
 
+    // 待办改了怎么刷新小部件：数量变了只换头部（partiallyUpdate，不重绑列表）并通知列表；有没有列表变了才整个 updateAppWidget；只改了内容只通知列表
+    @Test fun todoWidgetRefreshTrigger() {
+        val first = CourseWidgets.todoUpdate(false, "", "s1", "", "h1", "", "r1")
+        assertEquals(CourseWidgets.T_FULL, first.kind); assertTrue(first.rows)
+        val count = CourseWidgets.todoUpdate(false, "s1", "s1", "h1", "h2", "r1", "r2")
+        assertEquals(CourseWidgets.T_HEAD, count.kind); assertTrue(count.rows)
+        val title = CourseWidgets.todoUpdate(false, "s1", "s1", "h1", "h1", "r1", "r2")
+        assertEquals(CourseWidgets.T_NONE, title.kind); assertTrue(title.rows)
+        val same = CourseWidgets.todoUpdate(false, "s1", "s1", "h1", "h1", "r1", "r1")
+        assertEquals(CourseWidgets.T_NONE, same.kind); assertFalse(same.rows)
+        assertEquals(CourseWidgets.T_FULL, CourseWidgets.todoUpdate(false, "s1", "s2", "h1", "h2", "r1", "r2").kind)   // 空 ↔ 有待办
+        assertEquals(CourseWidgets.T_FULL, CourseWidgets.todoUpdate(true, "s1", "s1", "h1", "h1", "r1", "r1").kind)    // 改样式等强制
+    }
+
     @Test fun empty() { val n = CourseWidgets.plan(emptyList(), 600); assertNull(n.main); assertFalse(n.doneAll) }
     @Test fun inClass() {
         val n = CourseWidgets.plan(day, 650)
