@@ -5,7 +5,8 @@ import org.json.JSONObject
 
 /*
  * 云同步（给 MCP 智能体用）的纯逻辑，不碰 Android，有单测 SyncTest。协议见 zhishi-cloud 的 docs/API.md：
- *  - 每样东西是一条 item：course / todo / settings(term、periods、profile)，data 用 Kotlin 属性名（不是 Slot.json() 的短键）；
+ *  - 每样东西是一条 item：course / todo / settings(term、periods、profile、skin、rotation、widget_course、widget_todo、display，
+ *    后五个 = AppState 的 SKIN / ROTATION / WIDGET_* / DISPLAY 几块)，data 用 Kotlin 属性名（不是 Slot.json() 的短键）；
  *  - 本机给每条记一个 updatedAt（侧表 SyncLedger.entries，不改备份格式）+ 改过还没推上去的放进 outbox；删掉的变成墓碑（deleted）推上去；
  *  - 不在每个改动的地方打点：存储每次写完都 scan 一遍「现在的数据」和侧表里记的指纹比，新的 / 变了的 / 不见了的才记时间、进 outbox，
  *    所以手动改、AI 改、撤销、备份恢复、拖动排序全都自动算上；
@@ -35,6 +36,9 @@ data class SyncItem(val kind: String, val id: String, val updatedAt: Long, val d
 object SyncData {
     const val COURSE = "course"; const val TODO = "todo"; const val SETTINGS = "settings"
     const val TERM = "term"; const val PERIODS = "periods"; const val PROFILE = "profile"
+    const val SKIN = "skin"; const val ROTATION = "rotation"; const val WIDGET_COURSE = "widget_course"; const val WIDGET_TODO = "widget_todo"; const val DISPLAY = "display"
+    /** 外观和显示设置那几条（智能体也能改，见 MCP 的 set_skin / set_skin_rotation / set_widget_appearance / set_app_settings）。 */
+    val LOOKS = listOf(SKIN, ROTATION, WIDGET_COURSE, WIDGET_TODO, DISPLAY)
     fun key(kind: String, id: String) = "$kind:$id"
     fun kindOf(key: String) = key.substringBefore(':')
     fun idOf(key: String) = key.substringAfter(':')
@@ -62,6 +66,64 @@ object SyncData {
     fun periods(starts: List<Int>, ends: List<Int>, len: Int): JSONObject = JSONObject().put("secStarts", JSONArray(starts)).put("secEnds", JSONArray(ends)).put("secLen", len)
     fun profile(tz: String): JSONObject = JSONObject().put("tz", tz)
 
+    fun skin(l: SyncLook): JSONObject = JSONObject().put("skin", l.skin).put("mode", l.mode)
+    fun rotation(l: SyncLook): JSONObject = JSONObject().put("rotMode", l.rotMode).put("rotEvery", l.rotEvery).put("favs", JSONArray(l.favs))
+    fun widget(w: WidgetLook): JSONObject = JSONObject().put("style", w.style).put("tint", w.tint).put("clear", w.clear).put("dmode", w.dmode)
+    fun display(l: SyncLook): JSONObject = JSONObject().put("showWeekend", l.showWeekend).put("showOff", l.showOff).put("showLevel", l.showLevel).put("widgetLevel", l.widgetLevel)
+    fun look(l: SyncLook, id: String): JSONObject = when (id) {
+        SKIN -> skin(l); ROTATION -> rotation(l); WIDGET_COURSE -> widget(l.widgetCourse); WIDGET_TODO -> widget(l.widgetTodo); else -> display(l)
+    }
+    private fun widgetOf(w: WidgetLook, d: JSONObject) = WidgetLook(
+        style = if (d.optString("style", w.style) == WidgetStyleIds.CLASSIC) WidgetStyleIds.CLASSIC else WidgetStyleIds.GLASS,
+        tint = if (d.optString("tint", w.tint) == WidgetStyleIds.SKIN) WidgetStyleIds.SKIN else WidgetStyleIds.WALL,
+        clear = d.optInt("clear", w.clear).coerceIn(0, 100), dmode = d.optInt("dmode", w.dmode).coerceIn(0, 2))
+    /** 拉下来的一条外观 / 显示设置写进 l（缺的字段保留原值，越界的夹回范围；皮肤 id 由安卓那层再核对）。不是这几条就原样返回。 */
+    fun lookWith(l: SyncLook, id: String, d: JSONObject): SyncLook = when (id) {
+        SKIN -> l.copy(skin = d.optString("skin", l.skin).trim().ifEmpty { l.skin }, mode = d.optInt("mode", l.mode).coerceIn(0, 2))
+        ROTATION -> l.copy(rotMode = d.optInt("rotMode", l.rotMode).coerceIn(0, 2), rotEvery = d.optInt("rotEvery", l.rotEvery).coerceIn(0, 2),
+            favs = d.optJSONArray("favs")?.let { a -> (0 until a.length()).map { a.optString(it).trim() }.filter { it.isNotEmpty() }.distinct() } ?: l.favs)
+        WIDGET_COURSE -> l.copy(widgetCourse = widgetOf(l.widgetCourse, d))
+        WIDGET_TODO -> l.copy(widgetTodo = widgetOf(l.widgetTodo, d))
+        DISPLAY -> l.copy(showWeekend = d.optBoolean("showWeekend", l.showWeekend), showOff = d.optBoolean("showOff", l.showOff),
+            showLevel = d.optBoolean("showLevel", l.showLevel), widgetLevel = d.optBoolean("widgetLevel", l.widgetLevel))
+        else -> l
+    }
+
+    /** 撤销列表里一条设置改动的标题和前后对比（智能体改的；before / after = 日志里的 data，null = 不存在）。 */
+    fun settingsChange(id: String, before: JSONObject?, after: JSONObject?, skinName: (String) -> String): AiChange {
+        val title = when (id) {
+            PERIODS -> tr("每节课时间"); SKIN -> tr("皮肤"); ROTATION -> tr("皮肤轮换"); WIDGET_COURSE -> tr("课表小部件"); WIDGET_TODO -> tr("待办小部件")
+            DISPLAY -> tr("显示设置"); else -> tr("学期设置")
+        }
+        if (id !in LOOKS) return AiChange(title, emptyList())
+        val a = before?.let { lookWith(SyncLook(), id, it) }; val b = after?.let { lookWith(SyncLook(), id, it) } ?: return AiChange(title, emptyList())
+        val out = ArrayList<DiffLine>()
+        fun cmp(label: String, x: String?, y: String) { if (x != y) out += DiffLine(label, x, y) }
+        val modes = listOf(tr("跟随系统"), tr("浅色"), tr("深色")); val shades = listOf(tr("跟随 App"), tr("浅色"), tr("深色"))
+        fun yn(v: Boolean) = if (v) tr("显示") else tr("不显示")
+        fun favs(l: List<String>) = l.joinToString("、") { skinName(it) }.ifEmpty { "—" }
+        when (id) {
+            SKIN -> { cmp(tr("皮肤"), a?.let { skinName(it.skin) }, skinName(b.skin)); cmp(tr("深浅"), a?.let { modes[it.mode] }, modes[b.mode]) }
+            ROTATION -> {
+                val rm = listOf(tr("关闭"), tr("全部随机"), tr("收藏轮换")); val ev = listOf(tr("每次打开"), tr("每天"), tr("每周"))
+                cmp(tr("皮肤轮换"), a?.let { rm[it.rotMode] }, rm[b.rotMode]); cmp(tr("多久换一次"), a?.let { ev[it.rotEvery] }, ev[b.rotEvery])
+                cmp(tr("收藏的皮肤"), a?.let { favs(it.favs) }, favs(b.favs))
+            }
+            WIDGET_COURSE, WIDGET_TODO -> {
+                val x = a?.let { if (id == WIDGET_COURSE) it.widgetCourse else it.widgetTodo }; val y = if (id == WIDGET_COURSE) b.widgetCourse else b.widgetTodo
+                fun st(w: WidgetLook) = if (w.style == WidgetStyleIds.CLASSIC) tr("经典") else tr("液态玻璃")
+                fun ti(w: WidgetLook) = if (w.tint == WidgetStyleIds.SKIN) tr("跟随皮肤") else tr("跟随壁纸")
+                cmp(tr("小部件样式"), x?.let { st(it) }, st(y)); cmp(tr("玻璃颜色"), x?.let { ti(it) }, ti(y))
+                cmp(tr("透明度"), x?.let { "${it.clear}%" }, "${y.clear}%"); cmp(tr("深浅"), x?.let { shades[it.dmode] }, shades[y.dmode])
+            }
+            DISPLAY -> {
+                cmp(tr("周末"), a?.let { yn(it.showWeekend) }, yn(b.showWeekend)); cmp(tr("非本周的课"), a?.let { yn(it.showOff) }, yn(b.showOff))
+                cmp(tr("课块上的标签"), a?.let { yn(it.showLevel) }, yn(b.showLevel)); cmp(tr("小部件上的标签"), a?.let { yn(it.widgetLevel) }, yn(b.widgetLevel))
+            }
+        }
+        return AiChange(title, out)
+    }
+
     /** 指纹：同一份数据（本机按固定顺序生成）得到同一个值。 */
     fun hash(d: JSONObject): Int = d.toString().hashCode()
 
@@ -76,12 +138,21 @@ object SyncData {
     }
 }
 
-/** 同步关心的那部分本机数据（一份快照）。 */
+/** 外观和显示设置（= AppState 的 skin / mode、rotMode / rotEvery / favs、widgetCourse、widgetTodo、四个显示开关）。 */
+data class SyncLook(
+    val skin: String = "chunyu", val mode: Int = 0,
+    val rotMode: Int = 0, val rotEvery: Int = 1, val favs: List<String> = emptyList(),
+    val widgetCourse: WidgetLook = WidgetLook(), val widgetTodo: WidgetLook = WidgetLook(),
+    val showWeekend: Boolean = true, val showOff: Boolean = true, val showLevel: Boolean = true, val widgetLevel: Boolean = true,
+)
+
+/** 同步关心的那部分本机数据（一份快照）。look = null：不同步外观和显示设置（老的调用方 / 单测）。 */
 data class SyncLocal(
     val courses: List<Slot>, val todos: List<Todo>,
     val termStart: Long, val totalWeeks: Int,
     val secStarts: List<Int>, val secEnds: List<Int>, val secLen: Int,
     val tz: String,
+    val look: SyncLook? = null,
 ) {
     /** key → data（课、待办按列表顺序，最后三项设置）。同一个 id 出现两次只算第一条。 */
     fun snapshot(): LinkedHashMap<String, JSONObject> {
@@ -91,6 +162,7 @@ data class SyncLocal(
         m[SyncData.key(SyncData.SETTINGS, SyncData.TERM)] = SyncData.term(termStart, totalWeeks)
         m[SyncData.key(SyncData.SETTINGS, SyncData.PERIODS)] = SyncData.periods(secStarts, secEnds, secLen)
         m[SyncData.key(SyncData.SETTINGS, SyncData.PROFILE)] = SyncData.profile(tz)
+        look?.let { l -> for (id in SyncData.LOOKS) m[SyncData.key(SyncData.SETTINGS, id)] = SyncData.look(l, id) }
         return m
     }
 
@@ -103,6 +175,7 @@ data class SyncLocal(
             SyncData.SETTINGS -> if (!it.deleted) when (it.id) {
                 SyncData.TERM -> r = r.copy(termStart = it.data.optLong("termStart", -1L).let { v -> if (v < 0) -1L else v }, totalWeeks = it.data.optInt("totalWeeks", 20).coerceIn(1, 30))
                 SyncData.PERIODS -> SyncData.periodsOf(it.data)?.let { (a, b, l) -> r = r.copy(secStarts = a, secEnds = b, secLen = l) }
+                in SyncData.LOOKS -> r.look?.let { l -> r = r.copy(look = SyncData.lookWith(l, it.id, it.data)) }
             }
         }
         return r.copy(courses = cs, todos = ts)

@@ -223,9 +223,12 @@ object TestHooks {
         if (i.getBooleanExtra("cloudstate", false)) Log.i("ZhishiTest", "CLOUD STATE on=${CloudSync.enabled(ctx)} uid=${CloudSync.userId(ctx)} pending=${CloudSync.pendingCount(ctx)} enc=${CloudSync.tokenEncrypted(ctx)} err=${CloudSync.lastError.value}")
     }
 
+    private fun look(w: WidgetLook) = "${w.style}/${w.tint}/${w.clear}/${w.dmode}"
     private fun logState(c: Context) {
         val s = AiStateIO.read(c)
-        Log.i("ZhishiTest", "AISTATE courses=${s.courses.joinToString(",") { it.name + "@" + it.days.joinToString("") }} todos=${s.todos.joinToString(",") { it.title }} skin=${s.skin}")
+        Log.i("ZhishiTest", "AISTATE courses=${s.courses.joinToString(",") { it.name + "@" + it.days.joinToString("") }} todos=${s.todos.joinToString(",") { it.title }} skin=${s.skin} mode=${s.mode} " +
+            "rot=${s.rotMode}/${s.rotEvery}/${s.favs.joinToString("+")} wcourse=${look(s.widgetCourse)} wtodo=${look(s.widgetTodo)} " +
+            "display=${listOf(s.showWeekend, s.showOff, s.showLevel, s.widgetLevel).joinToString("") { if (it) "1" else "0" }}")
     }
 
     private fun widgetRows(c: Context, tag: String) {

@@ -154,8 +154,11 @@ object Skins {
     fun sysDark(c: Context) = (c.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
     /** redraw = false：调用方自己接着重画小部件（小部件刷新里轮换皮肤时）。 */
-    fun setSkin(c: Context, s: Skin, redraw: Boolean = true) { p(c).edit().putString("skin", s.id).apply(); skinState.value = s; if (redraw) CourseWidgets.safeUpdate(c) }
-    fun setMode(c: Context, m: Int) { p(c).edit().putInt("mode", m).apply(); modeState.value = m; CourseWidgets.safeUpdate(c) }
+    fun setSkin(c: Context, s: Skin, redraw: Boolean = true) { p(c).edit().putString("skin", s.id).apply(); skinState.value = s; if (redraw) CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) }
+    fun setMode(c: Context, m: Int) { p(c).edit().putInt("mode", m).apply(); modeState.value = m; CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) }
+    /** 存着的皮肤 id / 深浅（云同步读这个：后台进程里 skinState / modeState 可能还没 init）。 */
+    fun storedId(c: Context): String = byId(str(c, "skin")).id
+    fun storedMode(c: Context): Int = mode(c)
 
     /** 当前是不是深色（mode：0 跟随系统、1 浅色、2 深色）。 */
     fun darkFor(mode: Int, sys: Boolean) = when (mode) { 1 -> false; 2 -> true; else -> sys }
@@ -222,14 +225,14 @@ object SkinRotation {
     fun isFav(c: Context, id: String) = id in favs(c)
     fun toggleFav(c: Context, id: String) {
         val l = favs(c); val n = if (id in l) l - id else l + id
-        p(c).edit().putString("fav", n.joinToString(",")).apply(); ver.value++
+        p(c).edit().putString("fav", n.joinToString(",")).apply(); ver.value++; CloudSync.localChanged(c)
     }
 
     fun mode(c: Context) = int(c, "rot", OFF).let { if (it in OFF..FAV) it else OFF }
     fun every(c: Context) = int(c, "rotEvery", DAY).let { if (it in OPEN..WEEK) it else DAY }
     /** 改设置：从现在这个周期开始算（打开后下一个周期才换，不会一打开就跳）。 */
-    fun setMode(c: Context, m: Int) { p(c).edit().putInt("rot", m.coerceIn(OFF, FAV)).putLong("rotAt", period(every(c), Term.todayEpoch())).apply(); ver.value++ }
-    fun setEvery(c: Context, e: Int) { val v = e.coerceIn(OPEN, WEEK); p(c).edit().putInt("rotEvery", v).putLong("rotAt", period(v, Term.todayEpoch())).apply(); ver.value++ }
+    fun setMode(c: Context, m: Int) { p(c).edit().putInt("rot", m.coerceIn(OFF, FAV)).putLong("rotAt", period(every(c), Term.todayEpoch())).apply(); ver.value++; CloudSync.localChanged(c) }
+    fun setEvery(c: Context, e: Int) { val v = e.coerceIn(OPEN, WEEK); p(c).edit().putInt("rotEvery", v).putLong("rotAt", period(v, Term.todayEpoch())).apply(); ver.value++; CloudSync.localChanged(c) }
 
     /** 周期编号（纯函数）：每天 = epoch 天；每周 = 从周一开始的周编号；每次打开没有周期。 */
     fun period(every: Int, day: Long): Long = when (every) { DAY -> day; WEEK -> Math.floorDiv(day + 3, 7L); else -> -1L }

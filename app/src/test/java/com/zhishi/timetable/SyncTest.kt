@@ -196,4 +196,36 @@ class SyncTest {
         // 智能体给的数字可能是 3.0 / "3"
         assertEquals(setOf(3), SyncData.slot("x", JSONObject("""{"name":"a","days":[3.0,"9"],"from":1,"to":2}""")).days)
     }
+
+    @Test fun lookAndDisplaySettingsSyncBothWays() {
+        val look = SyncLook(skin = "yehang", favs = listOf("ying"), widgetTodo = WidgetLook(WidgetStyleIds.CLASSIC, WidgetStyleIds.SKIN, 40, 2))
+        val srv = FakeServer(); val st = Store(base().copy(look = look)); val led = SyncLedger()
+        enable(srv, st, led)
+        assertEquals(11, srv.rows.size)   // 2 课 + 1 待办 + term / periods / profile + skin / rotation / widget_course / widget_todo / display
+        assertEquals("yehang", srv.rows["settings:skin"]!!.data.getString("skin"))
+        assertEquals(40, srv.rows["settings:widget_todo"]!!.data.getInt("clear"))
+        assertEquals("ying", srv.rows["settings:rotation"]!!.data.getJSONArray("favs").getString(0))
+        // 智能体换皮肤、改待办小部件（只给了部分字段）→ 拉下来写进本机，别的设置不动
+        clock += 5000
+        srv.agent(SyncData.SETTINGS, SyncData.SKIN, JSONObject().put("skin", "ying").put("mode", 2), clock)
+        srv.agent(SyncData.SETTINGS, SyncData.WIDGET_TODO, JSONObject().put("clear", 30), clock)
+        srv.agent(SyncData.SETTINGS, SyncData.DISPLAY, JSONObject().put("showWeekend", false), clock)
+        val o = SyncEngine.run(led, st, srv, ::now)
+        assertEquals(3, o.byAgent.size)
+        val l = st.local.look!!
+        assertEquals("ying", l.skin); assertEquals(2, l.mode)
+        assertEquals(WidgetLook(WidgetStyleIds.CLASSIC, WidgetStyleIds.SKIN, 30, 2), l.widgetTodo)
+        assertFalse(l.showWeekend); assertTrue(l.showOff)
+        assertEquals(look.widgetCourse, l.widgetCourse); assertEquals(listOf("ying"), l.favs)
+        // 本机改小部件透明度 → 推上去
+        clock += 5000
+        st.local = st.local.copy(look = l.copy(widgetCourse = l.widgetCourse.copy(clear = 90)))
+        SyncEngine.run(led, st, srv, ::now)
+        assertEquals(90, srv.rows["settings:widget_course"]!!.data.getInt("clear"))
+        // 撤销列表里的前后对比
+        val ch = SyncData.settingsChange(SyncData.WIDGET_TODO, JSONObject().put("clear", 40).put("dmode", 2), JSONObject().put("clear", 30).put("dmode", 2)) { it }
+        assertEquals(listOf(DiffLine(tr("透明度"), "40%", "30%")), ch.lines)
+        assertEquals(tr("皮肤"), SyncData.settingsChange(SyncData.SKIN, JSONObject().put("skin", "a"), JSONObject().put("skin", "b")) { it.uppercase() }.lines.single().label)
+        assertTrue(SyncData.settingsChange(SyncData.TERM, null, JSONObject()) { it }.lines.isEmpty())
+    }
 }

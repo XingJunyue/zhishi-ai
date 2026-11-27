@@ -204,6 +204,20 @@ object AiTools {
             obj("page" to s("Page", PAGES.keys.toList()), required = listOf("page"))),
     ) }
 
+    /** 只在手机上有意义的工具（MCP 服务器不提供）：open_page = 打开 App 里的某一页，远程的智能体没有界面可打开。 */
+    val LOCAL_ONLY = setOf(OPEN_PAGE)
+
+    /**
+     * 和 MCP 服务器共用的一份工具定义（tools/ai-tools.json，单测 AiToolsSchemaTest 保证它和这里一致；
+     * zhishi-cloud 的 src/app-tools.json 是它的拷贝，那边的测试要求每个工具都有同名、参数不少的 MCP 工具）。
+     */
+    fun schemaJson(skins: List<Pair<String, String>>): JSONObject = JSONObject()
+        .put("version", 1)
+        .put("tools", JSONArray().also { a -> TOOLS.forEach { t ->
+            a.put(JSONObject().put("name", t.name).put("description", t.description).put("parameters", t.parameters)
+                .put("mutating", t.name in MUTATING).put("local_only", t.name in LOCAL_ONLY)) } })
+        .put("skins", JSONArray().also { a -> skins.forEach { (id, n) -> a.put(JSONObject().put("id", id).put("name", n)) } })
+
     val MUTATING = setOf(ADD_COURSE, UPDATE_COURSE, MOVE_COURSE, DELETE_COURSE, SET_TERM, SET_PERIOD_TIMES, ADD_TODO, UPDATE_TODO, COMPLETE_TODO, DELETE_TODO, PIN_TODO,
         SET_SKIN, SET_SKIN_ROTATION, SET_WIDGET, SET_APP)
 

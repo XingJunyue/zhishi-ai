@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 /*
  * 云同步 + MCP 智能体（安卓那层）。协议：zhishi-cloud 的 docs/API.md；合并规则在纯 Kotlin 的 Sync.kt。
  *  - 默认关着：只有用户在「我的 → AI → 连接 AI 智能体（MCP）」里打开同步，才注册一个匿名账号（没有邮箱 / 密码），
- *    把课表、待办和学期 / 节次设置推到服务器；关着时什么都不上传。
+ *    把课表、待办和设置（学期、节次、皮肤和轮换、小部件外观、显示）推到服务器；关着时什么都不上传。
  *  - 设备令牌（zsd_）用 Android Keystore 加密存在 prefs `cloud`（和 AI 设置的 API Key 同一套 KeystoreCipher）；丢了就找不回账号（手机上的数据还在）。
  *  - 什么时候同步：打开 App / 回到前台、本机改了东西（2 秒去抖）、前台时每分钟一次、后台 WorkManager 每 15 分钟一次。
  *  - 存储每次写完（Term.setDesired / setTermStart / … / TodoStore.save）都调 localChanged：scan 一遍记上改动时间、进 outbox。
@@ -65,7 +65,7 @@ object CloudSync {
     // ---------------- 本机存储 ----------------
     class Store(private val c: Context) : SyncStore {
         override fun read(): SyncLocal = SyncLocal(Term.desired(c).filter { it.kind == "course" }, TodoStore.all(c), Term.termStart(c), Term.totalWeeks(c),
-            Term.secStarts(c), Term.secEnds(c), Term.secLen(c), TimeZone.getDefault().id)
+            Term.secStarts(c), Term.secEnds(c), Term.secLen(c), TimeZone.getDefault().id, look(c))
         override fun write(old: SyncLocal, new: SyncLocal, taken: List<SyncItem>) {
             if (old.courses != new.courses) Term.setDesired(c, Term.desired(c).filter { it.kind != "course" } + new.courses)
             if (old.todos != new.todos) {
@@ -80,8 +80,26 @@ object CloudSync {
             if (old.secStarts != new.secStarts || old.secEnds != new.secEnds || old.secLen != new.secLen) {
                 Term.setSecStarts(c, new.secStarts); Term.setSecLen(c, new.secLen); Term.setSecEnds(c, new.secEnds); CourseWidgets.safeUpdate(c)
             }
+            if (new.look != null && old.look != new.look) applyLook(c, old.look ?: new.look, new.look)
             AiData.ver.value++
         }
+    }
+
+    /** 外观和显示设置（从存储读，不用界面上的状态：后台同步时界面可能还没起来）。 */
+    fun look(c: Context): SyncLook {
+        fun w(k: String) = WidgetLook(WidgetStyle.get(c, k), WidgetStyle.tint(c, k), WidgetStyle.clear(c, k), WidgetStyle.mode(c, k))
+        return SyncLook(Skins.storedId(c), Skins.storedMode(c), SkinRotation.mode(c), SkinRotation.every(c), SkinRotation.favs(c),
+            w(WidgetStyle.COURSE), w(WidgetStyle.TODO), Term.showWeekend(c), Term.showOff(c), Term.showLevel(c), Term.widgetLevel(c))
+    }
+
+    /** 拉下来的外观 / 显示设置写进手机（和 AI 助手同一条路：AiStateIO.write，只写变了的块；各自的 setter 会重画小部件）。 */
+    private fun applyLook(c: Context, old: SyncLook, new: SyncLook) {
+        val cur = AiStateIO.read(c).copy(skin = old.skin, mode = old.mode, rotMode = old.rotMode, rotEvery = old.rotEvery, favs = old.favs,
+            widgetCourse = old.widgetCourse, widgetTodo = old.widgetTodo, showWeekend = old.showWeekend, showOff = old.showOff, showLevel = old.showLevel, widgetLevel = old.widgetLevel)
+        val to = cur.copy(skin = Skins.byId(new.skin).id, mode = new.mode, rotMode = new.rotMode, rotEvery = new.rotEvery,
+            favs = new.favs.filter { id -> Skins.ALL.any { it.id == id } }, widgetCourse = new.widgetCourse, widgetTodo = new.widgetTodo,
+            showWeekend = new.showWeekend, showOff = new.showOff, showLevel = new.showLevel, widgetLevel = new.widgetLevel)
+        AiStateIO.write(c, cur, to)
     }
 
     /** 主线程上跑（拿不到主线程就直接跑）：改侧表和写存储都在主线程，和界面上的改动不打架。 */
@@ -284,7 +302,9 @@ object CloudSync {
             val d = x.optJSONObject("data") ?: return null
             return when (e.kind) { SyncData.COURSE -> SyncData.slot(e.itemId, d); SyncData.TODO -> SyncData.todoOf(e.itemId, d); else -> null }
         }
-        val ch = if (e.kind == SyncData.SETTINGS) AiChange(tr("学期设置"), emptyList()) else AiTools.describe(s, obj(e.before), obj(e.after), TimeZone.getDefault())
+        fun data(x: JSONObject?) = if (x == null || x.optBoolean("deleted")) null else x.optJSONObject("data")
+        val ch = if (e.kind == SyncData.SETTINGS) SyncData.settingsChange(e.itemId, data(e.before), data(e.after)) { id -> tr(Skins.byId(id).name) }
+            else AiTools.describe(s, obj(e.before), obj(e.after), TimeZone.getDefault())
         return UndoEntry(ch, setOf(SyncData.key(e.kind, e.itemId)), e.undone, e.seq, e.at, e.who)
     }
 

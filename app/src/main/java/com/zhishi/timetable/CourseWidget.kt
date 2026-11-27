@@ -924,7 +924,7 @@ object WidgetStyle {
     fun norm(v: String?): String = if (v == CLASSIC) CLASSIC else GLASS
     fun classic(c: Context, kind: String = COURSE) = get(c, kind) == CLASSIC
     /** 换样式：存下来并立刻重画（两种小部件都重画，各按各的设置）。 */
-    fun set(c: Context, v: String, kind: String = COURSE) { migrate(c, kind); p(c).edit().putString(key(kind, "style"), norm(v)).apply(); ver.value++; CourseWidgets.safeUpdate(c) }
+    fun set(c: Context, v: String, kind: String = COURSE) { migrate(c, kind); p(c).edit().putString(key(kind, "style"), norm(v)).apply(); ver.value++; CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) }
 
     /** 液态玻璃的颜色来源：跟随壁纸（默认）/ 跟随皮肤。`tint` = wall | skin。经典样式不受影响，始终跟皮肤。 */
     const val WALL = "wall"
@@ -932,18 +932,18 @@ object WidgetStyle {
     val TINTS = listOf(WALL to "跟随壁纸", SKIN to "跟随皮肤")
     fun tint(c: Context, kind: String = COURSE): String = if (read(c, kind, "tint") == SKIN) SKIN else WALL
     fun followWall(c: Context, kind: String = COURSE) = tint(c, kind) == WALL
-    fun setTint(c: Context, v: String, kind: String = COURSE) { migrate(c, kind); p(c).edit().putString(key(kind, "tint"), if (v == SKIN) SKIN else WALL).apply(); ver.value++; CourseWidgets.safeUpdate(c) }
+    fun setTint(c: Context, v: String, kind: String = COURSE) { migrate(c, kind); p(c).edit().putString(key(kind, "tint"), if (v == SKIN) SKIN else WALL).apply(); ver.value++; CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) }
 
     /** 玻璃透明度 0..100（%），默认 65（build-21 起上限 100，拉满 = 导航条那么透）。 */
     const val CLEAR_DEFAULT = 65
     fun clear(c: Context, kind: String = COURSE): Int { migrate(c, kind); return int(c, key(kind, "clear"), CLEAR_DEFAULT).coerceIn(0, WallTint.MAX) }
     /** 改透明度：马上存、预览马上变；redraw = false 时先不重画桌面（拖动滑块中途），松手后再重画。 */
-    fun setClear(c: Context, v: Int, redraw: Boolean = true, kind: String = COURSE) { migrate(c, kind); p(c).edit().putInt(key(kind, "clear"), v.coerceIn(0, WallTint.MAX)).apply(); ver.value++; if (redraw) CourseWidgets.safeUpdate(c) }
+    fun setClear(c: Context, v: Int, redraw: Boolean = true, kind: String = COURSE) { migrate(c, kind); p(c).edit().putInt(key(kind, "clear"), v.coerceIn(0, WallTint.MAX)).apply(); ver.value++; if (redraw) { CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) } }
 
     /** 深浅：0 跟随 App（皮肤的浅色 / 深色设置）、1 浅色、2 深色。跟随壁纸的玻璃按壁纸自动选深浅，不看这个。 */
     val MODES = listOf("跟随 App", "浅色", "深色")
     fun mode(c: Context, kind: String = COURSE): Int { migrate(c, kind); return int(c, key(kind, "dmode"), 0).let { if (it in 0..2) it else 0 } }
-    fun setMode(c: Context, v: Int, kind: String = COURSE) { migrate(c, kind); p(c).edit().putInt(key(kind, "dmode"), v.coerceIn(0, 2)).apply(); ver.value++; CourseWidgets.safeUpdate(c) }
+    fun setMode(c: Context, v: Int, kind: String = COURSE) { migrate(c, kind); p(c).edit().putInt(key(kind, "dmode"), v.coerceIn(0, 2)).apply(); ver.value++; CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) }
     /** 这种小部件用的皮肤配色（当前皮肤 + 自己的深浅设置）。 */
     fun pal(c: Context, kind: String = COURSE): Pal {
         val s = Skins.byId(try { c.getSharedPreferences("look", Context.MODE_PRIVATE).getString("skin", null) } catch (x: ClassCastException) { null })

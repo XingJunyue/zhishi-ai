@@ -73,7 +73,7 @@ fun McpScreen() {
     LaunchedEffect(toast) { if (toast != null) { kotlinx.coroutines.delay(2000); toast = null } }
 
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-        Note(tr("让支持 MCP 的 AI 智能体读写你的课表和待办：只有打开下面的「云同步」后，课表、待办和学期 / 节次设置才会同步到知时 AI 的同步服务器（mcp.xingjunyue.top）；关着时不上传任何数据。"), warm = true)
+        Note(tr("让支持 MCP 的 AI 智能体读写你的课表和待办：只有打开下面的「云同步」后，课表、待办和学期、节次、皮肤、小部件和显示设置才会同步到知时 AI 的同步服务器（mcp.xingjunyue.top）；关着时不上传任何数据。"), warm = true)
 
         SectionTitle(tr("云同步"), tr("打开后会注册一个匿名同步账号（不要邮箱和密码），在手机和服务器之间同步；智能体的改动会同步回手机，可以撤销。"))
         SoftCard(Modifier.fillMaxWidth(), pad = 14.dp) {

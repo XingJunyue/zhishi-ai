@@ -138,7 +138,7 @@ object AiStateIO {
             StatePart.SECS -> { Term.setSecStarts(c, to.secStarts); Term.setSecEnds(c, to.secEnds) }
             StatePart.SKIN -> { if (from.skin != to.skin) Skins.setSkin(c, Skins.byId(to.skin)); if (from.mode != to.mode) Skins.setMode(c, to.mode) }
             StatePart.ROTATION -> {
-                if (from.favs != to.favs) { c.getSharedPreferences("look", Context.MODE_PRIVATE).edit().putString("fav", to.favs.joinToString(",")).apply(); SkinRotation.ver.value++ }
+                if (from.favs != to.favs) { c.getSharedPreferences("look", Context.MODE_PRIVATE).edit().putString("fav", to.favs.joinToString(",")).apply(); SkinRotation.ver.value++; CloudSync.localChanged(c) }
                 if (from.rotMode != to.rotMode) SkinRotation.setMode(c, to.rotMode)
                 if (from.rotEvery != to.rotEvery) SkinRotation.setEvery(c, to.rotEvery)
             }

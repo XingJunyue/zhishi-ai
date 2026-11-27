@@ -1,0 +1,672 @@
+{
+  "skins": [
+    {
+      "name": "春雨",
+      "id": "chunyu"
+    },
+    {
+      "name": "宣纸",
+      "id": "xuanzhi"
+    },
+    {
+      "name": "青瓷",
+      "id": "qingci"
+    },
+    {
+      "name": "暮山",
+      "id": "mushan"
+    },
+    {
+      "name": "夜航",
+      "id": "yehang"
+    },
+    {
+      "name": "樱",
+      "id": "ying"
+    },
+    {
+      "name": "银杏",
+      "id": "yinxing"
+    },
+    {
+      "name": "松雪",
+      "id": "songxue"
+    },
+    {
+      "name": "荷风",
+      "id": "hefeng"
+    },
+    {
+      "name": "竹影",
+      "id": "zhuying"
+    },
+    {
+      "name": "幽兰",
+      "id": "youlan"
+    },
+    {
+      "name": "青绿",
+      "id": "qinglv"
+    },
+    {
+      "name": "寒梅",
+      "id": "hanmei"
+    },
+    {
+      "name": "柳月",
+      "id": "liuyue"
+    },
+    {
+      "name": "桂香",
+      "id": "guixiang"
+    },
+    {
+      "name": "海棠",
+      "id": "haitang"
+    },
+    {
+      "name": "檐雨",
+      "id": "yanyu"
+    },
+    {
+      "name": "归雁",
+      "id": "guiyan"
+    }
+  ],
+  "version": 1,
+  "tools": [
+    {
+      "local_only": false,
+      "name": "add_course",
+      "description": "Add a course to the timetable. Give either start/end period or start/end time.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "start_time": {
+            "description": "Start time HH:mm (use instead of periods when the class has clock times)",
+            "type": "string"
+          },
+          "note": {
+            "description": "Note",
+            "type": "string"
+          },
+          "weeks": {
+            "description": "Teaching weeks, e.g. \"1-16\" or \"1-8,10-16\"; empty = every week",
+            "type": "string"
+          },
+          "teacher": {
+            "description": "Teacher",
+            "type": "string"
+          },
+          "level": {
+            "description": "Display tag",
+            "type": "string",
+            "enum": [
+              "important",
+              "normal",
+              "easy"
+            ]
+          },
+          "weekdays": {
+            "description": "Days of week, 1=Monday \u2026 7=Sunday",
+            "type": "array",
+            "items": {"type": "integer"}
+          },
+          "name": {
+            "description": "Course name",
+            "type": "string"
+          },
+          "end_time": {
+            "description": "End time HH:mm",
+            "type": "string"
+          },
+          "start_period": {
+            "description": "First period number (1-based), as in the period table",
+            "type": "integer"
+          },
+          "odd_even": {
+            "description": "Only odd or even weeks",
+            "type": "string",
+            "enum": [
+              "all",
+              "odd",
+              "even"
+            ]
+          },
+          "room": {
+            "description": "Classroom",
+            "type": "string"
+          },
+          "end_period": {
+            "description": "Last period number (inclusive)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "weekdays"
+        ]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "update_course",
+      "description": "Change fields of an existing course (only the fields given change). Use the course id from the context. If the course meets on several weekdays and only one of them should change, pass only_weekday.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "description": "Note",
+            "type": "string"
+          },
+          "weeks": {
+            "description": "Teaching weeks, e.g. \"1-16\" or \"1-8,10-16\"; empty = every week",
+            "type": "string"
+          },
+          "level": {
+            "description": "Display tag",
+            "type": "string",
+            "enum": [
+              "important",
+              "normal",
+              "easy"
+            ]
+          },
+          "weekdays": {
+            "description": "Days of week, 1=Monday \u2026 7=Sunday",
+            "type": "array",
+            "items": {"type": "integer"}
+          },
+          "end_time": {
+            "description": "End time HH:mm",
+            "type": "string"
+          },
+          "start_period": {
+            "description": "First period number (1-based), as in the period table",
+            "type": "integer"
+          },
+          "odd_even": {
+            "description": "Only odd or even weeks",
+            "type": "string",
+            "enum": [
+              "all",
+              "odd",
+              "even"
+            ]
+          },
+          "room": {
+            "description": "Classroom",
+            "type": "string"
+          },
+          "end_period": {
+            "description": "Last period number (inclusive)",
+            "type": "integer"
+          },
+          "start_time": {
+            "description": "Start time HH:mm (use instead of periods when the class has clock times)",
+            "type": "string"
+          },
+          "teacher": {
+            "description": "Teacher",
+            "type": "string"
+          },
+          "name": {
+            "description": "Course name",
+            "type": "string"
+          },
+          "only_weekday": {
+            "description": "Change only this weekday's meeting (splits it off)",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Course id from the context",
+            "type": "string"
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "move_course",
+      "description": "Move a course to another weekday and/or periods/time.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to_start_time": {
+            "description": "New start HH:mm",
+            "type": "string"
+          },
+          "to_weekday": {
+            "description": "New weekday 1-7",
+            "type": "integer"
+          },
+          "to_end_period": {
+            "description": "New last period",
+            "type": "integer"
+          },
+          "from_weekday": {
+            "description": "Which weekday's meeting to move when the course meets on several days",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Course id",
+            "type": "string"
+          },
+          "to_end_time": {
+            "description": "New end HH:mm",
+            "type": "string"
+          },
+          "to_start_period": {
+            "description": "New first period",
+            "type": "integer"
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "delete_course",
+      "description": "Delete a course (or only one weekday's meeting of it).",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "only_weekday": {
+            "description": "Delete only this weekday's meeting",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Course id",
+            "type": "string"
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "set_term",
+      "description": "Set the term: the date of any day in week 1, or which week it is now, and/or the total number of weeks.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "total_weeks": {
+            "description": "Total weeks in the term (1-30)",
+            "type": "integer"
+          },
+          "current_week": {
+            "description": "This week's number",
+            "type": "integer"
+          },
+          "start_date": {
+            "description": "Any date in week 1, YYYY-MM-DD",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "local_only": false,
+      "name": "set_period_times",
+      "description": "Set class period start/end times. Only the listed periods change; count truncates or extends the number of periods.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "count": {
+            "description": "Total number of periods per day (optional)",
+            "type": "integer"
+          },
+          "periods": {
+            "description": "Periods to set",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "period": {
+                  "description": "Period number, 1-based",
+                  "type": "integer"
+                },
+                "start": {
+                  "description": "HH:mm",
+                  "type": "string"
+                },
+                "end": {
+                  "description": "HH:mm",
+                  "type": "string"
+                }
+              },
+              "required": ["period"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "local_only": false,
+      "name": "add_todo",
+      "description": "Add a to-do item.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "description": "Note",
+            "type": "string"
+          },
+          "pinned": {
+            "description": "Pin to top",
+            "type": "boolean"
+          },
+          "due": {
+            "description": "Due date/time, local, \"YYYY-MM-DD HH:mm\" or \"YYYY-MM-DD\" for all-day",
+            "type": "string"
+          },
+          "all_day": {
+            "description": "Due date only, no time",
+            "type": "boolean"
+          },
+          "course": {
+            "description": "Related course name",
+            "type": "string"
+          },
+          "remind_before_minutes": {
+            "description": "Remind this many minutes before due (0, 5, 15, 30, 60, 1440)",
+            "type": "integer"
+          },
+          "title": {
+            "description": "Title",
+            "type": "string"
+          },
+          "remind": {
+            "description": "Send a reminder notification",
+            "type": "boolean"
+          }
+        },
+        "required": ["title"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "update_todo",
+      "description": "Change fields of a to-do (only the fields given change).",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "description": "Note",
+            "type": "string"
+          },
+          "due": {
+            "description": "New due \"YYYY-MM-DD HH:mm\" or \"YYYY-MM-DD\"",
+            "type": "string"
+          },
+          "clear_due": {
+            "description": "Remove the due date",
+            "type": "boolean"
+          },
+          "all_day": {
+            "description": "All-day",
+            "type": "boolean"
+          },
+          "course": {
+            "description": "Related course name, empty string to unlink",
+            "type": "string"
+          },
+          "remind_before_minutes": {
+            "description": "Minutes before due",
+            "type": "integer"
+          },
+          "id": {
+            "description": "To-do id from the context",
+            "type": "string"
+          },
+          "title": {
+            "description": "Title",
+            "type": "string"
+          },
+          "remind": {
+            "description": "Reminder on/off",
+            "type": "boolean"
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "complete_todo",
+      "description": "Mark a to-do done (or not done).",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "description": "To-do id",
+            "type": "string"
+          },
+          "done": {
+            "description": "true = done (default), false = reopen",
+            "type": "boolean"
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "delete_todo",
+      "description": "Delete a to-do.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {"id": {
+          "description": "To-do id",
+          "type": "string"
+        }},
+        "required": ["id"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "pin_todo",
+      "description": "Pin or unpin a to-do.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pinned": {
+            "description": "true = pin (default), false = unpin",
+            "type": "boolean"
+          },
+          "id": {
+            "description": "To-do id",
+            "type": "string"
+          }
+        },
+        "required": ["id"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "set_skin",
+      "description": "Switch the app skin and/or light/dark mode. Skins are listed in the context.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "Light/dark mode",
+            "type": "string",
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ]
+          },
+          "skin": {
+            "description": "Skin id or name",
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "local_only": false,
+      "name": "set_skin_rotation",
+      "description": "Skin favourites and automatic rotation.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "description": "Rotation mode",
+            "type": "string",
+            "enum": [
+              "off",
+              "random",
+              "favorites"
+            ]
+          },
+          "favorites": {
+            "description": "Replace the whole favourites list",
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "add_favorites": {
+            "description": "Skin ids/names to add to favourites",
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "remove_favorites": {
+            "description": "Skin ids/names to remove",
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "every": {
+            "description": "How often",
+            "type": "string",
+            "enum": [
+              "launch",
+              "daily",
+              "weekly"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "local_only": false,
+      "name": "set_widget_appearance",
+      "description": "Change home-screen widget appearance (timetable widget, to-do widget, or both).",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "widget": {
+            "description": "Which widget",
+            "type": "string",
+            "enum": [
+              "timetable",
+              "todo",
+              "both"
+            ]
+          },
+          "glass_color": {
+            "description": "Glass colour source (glass style only)",
+            "type": "string",
+            "enum": [
+              "wallpaper",
+              "skin"
+            ]
+          },
+          "transparency": {
+            "description": "Glass transparency 0-100 (%)",
+            "type": "integer"
+          },
+          "shade": {
+            "description": "Light/dark",
+            "type": "string",
+            "enum": [
+              "follow_app",
+              "light",
+              "dark"
+            ]
+          },
+          "style": {
+            "description": "Style",
+            "type": "string",
+            "enum": [
+              "glass",
+              "classic"
+            ]
+          }
+        },
+        "required": ["widget"]
+      }
+    },
+    {
+      "local_only": false,
+      "name": "set_app_settings",
+      "description": "Change timetable display settings.",
+      "mutating": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "show_other_week_courses": {
+            "description": "Show courses not held this week (greyed)",
+            "type": "boolean"
+          },
+          "show_level_tags": {
+            "description": "Show important/normal/easy tags on course blocks",
+            "type": "boolean"
+          },
+          "show_level_tags_in_widget": {
+            "description": "Show those tags on widgets",
+            "type": "boolean"
+          },
+          "show_weekend": {
+            "description": "Show Saturday/Sunday columns",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    {
+      "local_only": true,
+      "name": "open_page",
+      "description": "Open a page of the app for the user (no data change).",
+      "mutating": false,
+      "parameters": {
+        "type": "object",
+        "properties": {"page": {
+          "description": "Page",
+          "type": "string",
+          "enum": [
+            "timetable",
+            "todo",
+            "calendar",
+            "me",
+            "widgets",
+            "about",
+            "ai_settings",
+            "import",
+            "school_import",
+            "term_settings",
+            "period_times",
+            "add_course",
+            "add_todo"
+          ]
+        }},
+        "required": ["page"]
+      }
+    }
+  ]
+}

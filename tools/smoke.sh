@@ -453,6 +453,51 @@ assert sys.argv[1] not in ids, ids
 assert sys.argv[2] not in cids, cids
 print('server after undo: todos', len(ids), 'courses', len(cids), '(agent items gone)')
 PYEOF
+  # MCP 和 App 里的 AI 助手是同一套工具（tools/ai-tools.json）：线上 tools/list 要覆盖 App 的每个工具和参数（open_page 只在手机上）
+  rpc '{"jsonrpc":"2.0","id":10,"method":"tools/list"}' > shots/mcp-tools.json
+  python3 - <<'PYEOF' | tee -a shots/mcp.txt || { echo "MCP tools do not cover the in-app assistant's"; fail=1; }
+import json
+app = json.load(open('tools/ai-tools.json'))['tools']
+mcp = {t['name']: t for t in json.load(open('shots/mcp-tools.json'))['result']['tools']}
+miss = [t['name'] for t in app if not t['local_only'] and t['name'] not in mcp]
+miss += [t['name'] + '.' + k for t in app if t['name'] in mcp for k in t['parameters'].get('properties', {}) if k not in mcp[t['name']]['inputSchema'].get('properties', {})]
+assert not miss, miss
+print('MCP parity ok: %d MCP tools cover all %d shared in-app tools' % (len(mcp), sum(1 for t in app if not t['local_only'])))
+PYEOF
+  # 不是待办的工具：智能体换皮肤、改待办小部件外观 → 同步到手机（App 和桌面小部件都变）→ 撤销 → 回到原样
+  rpc '{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"get_settings","arguments":{}}}' > shots/mcp-settings-before.json
+  read -r PSKIN NSKIN NCLEAR < <(python3 -c "
+import json;d=json.load(open('shots/mcp-settings-before.json'))['result']['structuredContent']
+assert d['synced_from_phone'], 'look settings were not pushed by the app'
+p=d['skin']['id']; c=d['widgets']['todo']['transparency']
+print(p, 'qingci' if p=='ying' else 'ying', 40 if c==30 else 30)") || { echo "MCP get_settings failed"; cat shots/mcp-settings-before.json; fail=1; }
+  echo "MCP look before: skin=$PSKIN -> $NSKIN, todo widget transparency -> $NCLEAR" | tee -a shots/mcp.txt
+  rpc '{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"set_skin","arguments":{"skin":"'"$NSKIN"'"}}}' > shots/mcp-set-skin.json
+  rpc '{"jsonrpc":"2.0","id":13,"method":"tools/call","params":{"name":"set_widget_appearance","arguments":{"widget":"todo","transparency":'"$NCLEAR"',"shade":"dark"}}}' > shots/mcp-set-widget.json
+  for f in shots/mcp-set-skin.json shots/mcp-set-widget.json; do python3 -c "import json,sys;d=json.load(open(sys.argv[1]));assert not d['result'].get('isError'),d" "$f" || { echo "MCP $f failed"; cat "$f"; fail=1; }; done
+  adb shell input keyevent KEYCODE_HOME; sleep 1
+  adb logcat -c
+  bc --ez cloudsync true; wwait "CLOUD SYNC" 30
+  shot 15-mcp-look-widget 3
+  adb logcat -d -s ZhishiTest | grep "CLOUD" | tee -a shots/mcp.txt | grep -q "CLOUD SYNC ok .*agent=2 banner=.*n=2" || { echo "agent look changes not pulled"; fail=1; }
+  adb logcat -c
+  adb shell am start -n $P/$A --ez aistate true > /dev/null; sleep 2
+  adb logcat -d -s ZhishiTest | grep "AISTATE" | tail -1 | tee -a shots/mcp.txt > shots/mcp-look-state.txt
+  grep -q "skin=$NSKIN " shots/mcp-look-state.txt || { echo "agent skin not applied in app"; fail=1; }
+  grep -qE "wtodo=[a-z]+/[a-z]+/$NCLEAR/2 " shots/mcp-look-state.txt || { echo "agent widget look not applied in app"; fail=1; }
+  go table:0; shot 15-mcp-skin 3
+  adb shell am start -n $P/$A --ez undosheet true --es undofor agent > /dev/null; sleep 3; shot 15-mcp-look-undo-list 1
+  adb shell input keyevent KEYCODE_BACK; sleep 1
+  adb logcat -c
+  adb shell am start -n $P/$A --ez cloudundo true > /dev/null; aiwait "CLOUD UNDO"; sleep 2
+  adb logcat -d -s ZhishiTest | grep "CLOUD\|AISTATE" | tee -a shots/mcp.txt > shots/mcp-look-undo.txt
+  grep -q "CLOUD UNDO done=2 err=null" shots/mcp-look-undo.txt || { echo "agent look undo failed"; fail=1; }
+  grep "AISTATE" shots/mcp-look-undo.txt | tail -1 | grep -q "skin=$PSKIN " || { echo "skin not restored after undo"; fail=1; }
+  rpc '{"jsonrpc":"2.0","id":14,"method":"tools/call","params":{"name":"get_settings","arguments":{}}}' > shots/mcp-settings-after.json
+  python3 -c "
+import json,sys;a=json.load(open('shots/mcp-settings-before.json'))['result']['structuredContent'];b=json.load(open('shots/mcp-settings-after.json'))['result']['structuredContent']
+assert a['skin']==b['skin'] and a['widgets']==b['widgets'], (a['skin'],b['skin'],a['widgets'],b['widgets'])
+print('server after look undo: skin', b['skin']['id'], 'todo widget', b['widgets']['todo'])" | tee -a shots/mcp.txt || { echo "look undo not reflected on the server"; fail=1; }
   go table:0; sleep 1
   # 最后删掉这个临时用户：令牌随之失效
   adb logcat -c

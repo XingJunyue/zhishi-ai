@@ -49,14 +49,14 @@ object Term {
     fun totalWeeks(c: Context) = safeInt(c, "weeks", 20).coerceIn(1, 60)
     fun setTotalWeeks(c: Context, n: Int) { p(c).edit().putInt("weeks", n.coerceIn(1, 30)).apply(); CloudSync.localChanged(c) }
     fun showOff(c: Context) = p(c).getBoolean("showOff", true)
-    fun setShowOff(c: Context, v: Boolean) = p(c).edit().putBoolean("showOff", v).apply()
+    fun setShowOff(c: Context, v: Boolean) { p(c).edit().putBoolean("showOff", v).apply(); CloudSync.localChanged(c) }
     fun showWeekend(c: Context) = p(c).getBoolean("weekend", true)
-    fun setShowWeekend(c: Context, v: Boolean) = p(c).edit().putBoolean("weekend", v).apply()
+    fun setShowWeekend(c: Context, v: Boolean) { p(c).edit().putBoolean("weekend", v).apply(); CloudSync.localChanged(c) }
     /** 课块 / 小部件上标出水课、普通、重要。 */
     fun showLevel(c: Context) = p(c).getBoolean("lvlApp", true)
-    fun setShowLevel(c: Context, v: Boolean) = p(c).edit().putBoolean("lvlApp", v).apply()
+    fun setShowLevel(c: Context, v: Boolean) { p(c).edit().putBoolean("lvlApp", v).apply(); CloudSync.localChanged(c) }
     fun widgetLevel(c: Context) = p(c).getBoolean("lvlWidget", true)
-    fun setWidgetLevel(c: Context, v: Boolean) { p(c).edit().putBoolean("lvlWidget", v).apply(); CourseWidgets.safeUpdate(c) }
+    fun setWidgetLevel(c: Context, v: Boolean) { p(c).edit().putBoolean("lvlWidget", v).apply(); CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) }
     fun gridView(c: Context) = p(c).getBoolean("grid", true)
     fun setGridView(c: Context, v: Boolean) = p(c).edit().putBoolean("grid", v).apply()
 
