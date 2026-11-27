@@ -359,6 +359,7 @@ asrtest() {  # $1 = 标签（debug / qa）
 if curl -sfL --retry 3 -o out/asr.tar.bz2 https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-small-ctc-zh-int8-2025-04-01.tar.bz2 \
    && python3 -c "import tarfile;t=tarfile.open('out/asr.tar.bz2');m=[m for m in t.getmembers() if m.name.endswith('test_wavs/0.wav')][0];open('out/asr0.wav','wb').write(t.extractfile(m).read())"; then
   asrtest debug
+  adb shell input keyevent KEYCODE_BACK; sleep 1   # 先收起 AI 面板（不然盖在设置页上面）
   go ai_settings; sleep 2; adb shell input swipe 540 1900 540 300 400; adb shell input swipe 540 1900 540 300 400; shot 14-voice-settings-installed 2
   onScreen "删除语音模型" || { echo "voice settings: delete button missing"; fail=1; }
   go table:0; sleep 1
