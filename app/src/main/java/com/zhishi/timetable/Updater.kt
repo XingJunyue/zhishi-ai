@@ -259,7 +259,7 @@ fun AboutScreen() {
             Text(tr("知时 AI"), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = C.Ink)
             Text(tr("名字取自杜甫《春夜喜雨》：好雨知时节，当春乃发生。愿它像一场知时的春雨，安安静静地告诉你，现在该去哪儿上课。"),
                 fontSize = 13.sp, color = C.Soft, lineHeight = 21.sp, modifier = Modifier.padding(top = 6.dp))
-            Text(tr("课表、待办和设置都存在这台手机上，知时 AI 没有自己的服务器。只有在你使用 AI 功能（截图识别、AI 助手）时，截图、你发的消息和回答需要的课表 / 待办内容会发给你在「AI 设置」里填的服务商，由它处理。"), fontSize = 12.sp, color = C.Faint, lineHeight = 18.sp, modifier = Modifier.padding(top = 10.dp))
+            Text(tr("课表、待办和设置都存在这台手机上。只有在你使用 AI 功能（截图识别、AI 助手）时，截图、你发的消息和回答需要的课表 / 待办内容会发给你在「AI 设置」里填的服务商，由它处理；只有你在「连接 AI 智能体（MCP）」里打开云同步后，课表、待办和学期 / 节次设置才会同步到知时 AI 的同步服务器，供你授权的 AI 智能体读写，关掉就不再上传，也可以一键删除云端数据。"), fontSize = 12.sp, color = C.Faint, lineHeight = 18.sp, modifier = Modifier.padding(top = 10.dp))
             Text(tr("这是知时的 AI 版，和知时是两个独立的应用：数据、设置、提醒和小部件互不影响，可以同时安装。"), fontSize = 12.sp, color = C.Faint, lineHeight = 18.sp, modifier = Modifier.padding(top = 6.dp))
         }
         Spacer(Modifier.height(24.dp))

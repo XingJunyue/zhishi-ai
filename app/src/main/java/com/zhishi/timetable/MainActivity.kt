@@ -90,12 +90,19 @@ class MainActivity : ComponentActivity() {
         // 皮肤轮换（每次打开 / 每天 / 每周）
         try { SkinRotation.onTick(this) } catch (x: Throwable) {}
         CourseWidgets.refresh(this)
+        // 云同步（开着的话）：回到前台马上同步一次，之后前台每分钟一次
+        CloudSync.foreground(this, true)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        CloudSync.foreground(this, false)
     }
 }
 
 /** 底部四个标签页；widget / about 是从「我的」点进去的二级页。settings 是「我的」的旧名字（测试脚本、教程还在用）。 */
 private val TABS = listOf("table", "todo", "calendar", "me")
-private val SCREENS = TABS + listOf("widget", "about", "settings", "ai_settings", "ai_history", "ai_convo", "me_skin", "me_todo", "me_backup", "me_lang", "me_help")
+private val SCREENS = TABS + listOf("widget", "about", "settings", "ai_settings", "ai_history", "ai_convo", "me_skin", "me_todo", "me_backup", "me_lang", "me_help", "me_mcp")
 /** 二级页面返回到哪一页。 */
 private fun parentOf(s: String) = when (s) { "ai_convo" -> "ai_history"; else -> "me" }
 private fun norm(s: String?) = when (s) { "settings" -> "me"; in SCREENS -> s; else -> null }
@@ -148,6 +155,7 @@ fun App() {
                     "me_backup" -> Paged({ screen = "me" }, tr("备份与分享")) { MeBackupScreen() }
                     "me_lang" -> Paged({ screen = "me" }, tr("语言")) { MeLangScreen() }
                     "me_help" -> Paged({ screen = "me" }, tr("帮助与教程")) { MeHelpScreen() }
+                    "me_mcp" -> Paged({ screen = "me" }, tr("连接 AI 智能体")) { McpScreen() }
                 }
             }
         }
@@ -157,8 +165,13 @@ fun App() {
             enter = fadeIn(tween(180)) + slideInVertically { it / 2 }, exit = fadeOut(tween(120)) + slideOutVertically { it / 2 }) {
             CompositionLocalProvider(LocalGlassPage provides pageSrc) { BottomBar(screen, Modifier) { if (it == "ai") AiChat.show(screen) else screen = it } }
         }
+        // 智能体（MCP）同步下来的改动：底部提示「智能体改了 N 处 · 撤销」
+        if (!AiChat.open.value && Nav.fullScreen.value == 0)
+            AgentBanner(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (sub) 16.dp else 92.dp))
         // AI 助手：从导航条的 ✦ 打开的半屏面板；整屏流程（教务导入等）打开时不显示
         if (Nav.fullScreen.value == 0) AiSheetHost()
+        // 自定义撤回列表（AI 的一批 / 智能体的一批，哪里打开都在最上面）
+        UndoSheetHost()
     }
 }
 

@@ -11,3 +11,5 @@
 -dontwarn org.objectweb.asm.**
 -dontwarn org.osgi.framework.**
 -dontwarn org.apache.commons.compress.harmony.**
+# 云同步的后台 Worker：WorkManager 按类名反射创建（work-runtime 自带规则也有，这里写明）
+-keep class com.zhishi.timetable.CloudSyncWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }

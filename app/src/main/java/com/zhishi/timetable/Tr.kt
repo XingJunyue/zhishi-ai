@@ -98,5 +98,5 @@ fun dayLabel(d: Int): String {
 fun daysText(days: Collection<Int>) = days.sorted().joinToString(if (Tr.cjk) "" else " ") { dayShort(it) }
 
 class ZhishiApp : Application() {
-    override fun onCreate() { Tr.init(this); GlassLens.init(this); super.onCreate(); WallTint.listen(this); TodoAlarm.rescheduleAll(this) }
+    override fun onCreate() { Tr.init(this); GlassLens.init(this); super.onCreate(); WallTint.listen(this); TodoAlarm.rescheduleAll(this); CloudSync.init(this) }
 }

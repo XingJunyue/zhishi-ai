@@ -78,8 +78,9 @@ fun MeScreen(onOpen: (String) -> Unit) {
         MeGroup(tr("AI")) {
             MeRow(tr("AI 助手"), { Tile { SparkleIcon(meAccent(), true, Modifier.size(17.dp)) } }) { AiChat.show("me") }
             MeRow(tr("AI 对话记录"), { BubbleGlyph() }, value = if (chats > 0) tr("{0} 段", chats) else null) { onOpen("ai_history") }
-            MeRow(tr("AI 设置"), { Glyph(Icons.Outlined.Settings) }, value = if (ready) remember(Ai.ver.value) { Ai.settings(c).model } else tr("未设置"),
-                warm = !ready, last = true) { onOpen("ai_settings") }
+            MeRow(tr("AI 设置"), { Glyph(Icons.Outlined.Settings) }, value = if (ready) remember(Ai.ver.value) { Ai.settings(c).model } else tr("未设置")) { onOpen("ai_settings") }
+            val cloud = remember(CloudSync.ver.value) { CloudSync.enabled(c) }
+            MeRow(tr("连接 AI 智能体（MCP）"), { Glyph(Icons.Outlined.Refresh) }, value = if (cloud) tr("已开启") else tr("未开启"), last = true) { onOpen("me_mcp") }
         }
         MeGroup(tr("通用")) {
             val lang = remember { Tr.chosen(c) }

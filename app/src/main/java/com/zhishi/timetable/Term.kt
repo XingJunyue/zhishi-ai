@@ -33,6 +33,7 @@ object Term {
         // 有过课（导入、日历、手动加）就记下来：以后课表页再也不自动弹「导入课表」
         if (d.any { it.kind == "course" }) ImportPrompt.markImported(c)
         CourseWidgets.safeUpdate(c)
+        CloudSync.localChanged(c)
     }
 
     // ---------- 时间小工具 ----------
@@ -44,9 +45,9 @@ object Term {
     // ---------- 周次 ----------
     /** 第 1 周周一（epoch 天）；-1 = 没设，所有课按每周都上。 */
     fun termStart(c: Context) = try { p(c).getLong("term", -1L) } catch (x: ClassCastException) { -1L }
-    fun setTermStart(c: Context, day: Long) { p(c).edit().putLong("term", day).apply(); CourseWidgets.safeUpdate(c) }
+    fun setTermStart(c: Context, day: Long) { p(c).edit().putLong("term", day).apply(); CourseWidgets.safeUpdate(c); CloudSync.localChanged(c) }
     fun totalWeeks(c: Context) = safeInt(c, "weeks", 20).coerceIn(1, 60)
-    fun setTotalWeeks(c: Context, n: Int) = p(c).edit().putInt("weeks", n.coerceIn(1, 30)).apply()
+    fun setTotalWeeks(c: Context, n: Int) { p(c).edit().putInt("weeks", n.coerceIn(1, 30)).apply(); CloudSync.localChanged(c) }
     fun showOff(c: Context) = p(c).getBoolean("showOff", true)
     fun setShowOff(c: Context, v: Boolean) = p(c).edit().putBoolean("showOff", v).apply()
     fun showWeekend(c: Context) = p(c).getBoolean("weekend", true)
@@ -72,20 +73,20 @@ object Term {
     private val DEFAULT_SEC = listOf(480, 535, 600, 655, 840, 895, 960, 1015, 1140, 1195, 1250, 1305)
     fun secStarts(c: Context): List<Int> = ((try { p(c).getString("secs", null) } catch (x: ClassCastException) { null })
         ?.split(',')?.mapNotNull { it.trim().toIntOrNull()?.takeIf { v -> v in 0..1439 } } ?: DEFAULT_SEC).ifEmpty { DEFAULT_SEC }
-    fun setSecStarts(c: Context, l: List<Int>) = p(c).edit().putString("secs", l.joinToString(",")).apply()
+    fun setSecStarts(c: Context, l: List<Int>) { p(c).edit().putString("secs", l.joinToString(",")).apply(); CloudSync.localChanged(c) }
     fun secLen(c: Context) = safeInt(c, "secLen", 45).coerceIn(5, 300)
     /** 读 int：类型不对（老版本存成了别的类型）就当没存。 */
     private fun safeInt(c: Context, k: String, def: Int) = try { p(c).getInt(k, def) } catch (x: ClassCastException) { def }
-    fun setSecLen(c: Context, m: Int) = p(c).edit().putInt("secLen", m).apply()
+    fun setSecLen(c: Context, m: Int) { p(c).edit().putInt("secLen", m).apply(); CloudSync.localChanged(c) }
     /** 每节下课时间：单独改过的用改过的，没改过的 = 上课时间 + 每节时长。 */
     fun secEnds(c: Context): List<Int> {
         val st = secStarts(c); val len = secLen(c)
         val saved = (try { p(c).getString("secE", null) } catch (x: ClassCastException) { null })?.split(',')?.map { it.trim().toIntOrNull() } ?: emptyList()
         return st.indices.map { i -> saved.getOrNull(i)?.takeIf { it > st[i] } ?: (st[i] + len) }
     }
-    fun setSecEnds(c: Context, l: List<Int>) = p(c).edit().putString("secE", l.joinToString(",")).apply()
+    fun setSecEnds(c: Context, l: List<Int>) { p(c).edit().putString("secE", l.joinToString(",")).apply(); CloudSync.localChanged(c) }
     /** 统一时长：清掉单独改过的下课时间。 */
-    fun resetSecEnds(c: Context) = p(c).edit().remove("secE").apply()
+    fun resetSecEnds(c: Context) { p(c).edit().remove("secE").apply(); CloudSync.localChanged(c) }
     fun secRange(c: Context, a: Int, b: Int): Pair<Int, Int> {
         val s = secStarts(c); val e = secEnds(c)
         val i = (a - 1).coerceIn(0, s.lastIndex); val j = (b - 1).coerceIn(i, s.lastIndex)
