@@ -26,10 +26,13 @@ adb install -r -g out/test-debug.apk || exit 1
 adb shell am start -n $P/$A --ez seed true --ez notour true; sleep 8
 adb shell input keyevent KEYCODE_HOME; sleep 3
 adb logcat -c
-bc --ez wpin true; sleep 4; shot pin-dialog
-tapRe "Add to home screen" || tapRe "ADD" || tapRe "Add" || echo "pin button not found"
+# 放小部件要在前台请求（后台请求桌面不理）
+adb shell am start -n $P/$A --ez wpin true > /dev/null; sleep 5; shot pin-dialog
+adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1; adb shell cat /sdcard/ui.xml > shots/pin-ui.xml
+tapRe "Add to home screen" || tapRe "ADD AUTOMATICALLY" || tapRe "ADD" || tapRe "Add" || echo "pin button not found"
 sleep 5; adb shell input keyevent KEYCODE_HOME; sleep 4; shot widget-pinned
-adb shell dumpsys appwidget | grep -E "TodoWidget|provider=" | head -10 | tee shots/appwidget.txt
+adb logcat -d -s ZhishiTest > shots/pin-log.txt; cat shots/pin-log.txt | grep -E "WPIN|WLAT" | head
+adb shell dumpsys appwidget > shots/appwidget.txt; grep -E "TodoWidget|id=" shots/appwidget.txt | head -20
 measure() {  # $1 = 标签, $2.. = 广播参数；量到第一次「row」/「has=false」
   local tag=$1; shift; local want=$1; shift
   adb logcat -c
