@@ -392,7 +392,7 @@ aiwait "CLOUD ON" || true; sleep 1
 adb logcat -d -s ZhishiTest | grep "CLOUD" | tee shots/mcp.txt
 if grep -q "CLOUD ON ok" shots/mcp.txt; then
   adb logcat -c
-  adb shell am start -n $P/$A --es cloudtoken "CI 智能体" > /dev/null; aiwait "CLOUD TOKEN"
+  adb shell am start -n $P/$A --es cloudtoken "'CI 智能体'" > /dev/null; aiwait "CLOUD TOKEN"
   adb logcat -d -s ZhishiTest | grep "CLOUD" | tee -a shots/mcp.txt
   adb pull /sdcard/Android/data/$P/files/agent.txt out/agent.txt > /dev/null 2>&1
   TOK=$(cat out/agent.txt 2>/dev/null)
@@ -414,13 +414,18 @@ if grep -q "CLOUD ON ok" shots/mcp.txt; then
   echo "MCP added todo=$TID course=$CID" | tee -a shots/mcp.txt
   # 桌面在前台时同步（和后台 / 前台轮询一样的路径）：量小部件多久出现智能体加的待办
   adb logcat -c
-  bc --es wlatmark "MCP 智能体加的待办"; bc --ez cloudsync true
-  wwait "CLOUD SYNC" 30; wwait "WLAT row" 15 || echo "MCP todo not fetched by the widget"
+  # adb shell 把参数拼成一行给手机上的 sh：带空格的标题要再包一层引号，不然只传过去「MCP」
+  bc --es wlatmark "'MCP 智能体加的待办'"; bc --ez cloudsync true
+  # 它的截止是明天，排在今天那几条后面、不在小部件可见的前几行里：桌面不会为它取行（WLAT row），
+  # 所以看小部件列表工厂读到的快照里有没有它（WLAT load … has=true，就是桌面这次要显示的那份列表）
+  WMCP='WLAT (row|load .* has=true)'
+  wwait "CLOUD SYNC" 30; wwait "$WMCP" 15 || echo "MCP todo not fetched by the widget"
   shot 15-mcp-widget 2
   adb logcat -d -s ZhishiTest | grep "CLOUD\|WLAT" | tee -a shots/mcp.txt
-  echo "WLAT RESULT mcp-pull: $(grep 'WLAT row' shots/mcp.txt | head -1 | grep -oE '\+[0-9]+ms')" | tee -a shots/wlat.txt
+  grep -q "WLAT start MCP 智能体加的待办" shots/mcp.txt || { echo "widget marker not set to the full title"; fail=1; }
+  echo "WLAT RESULT mcp-pull(sync+widget): $(grep -E "$WMCP" shots/mcp.txt | head -1 | grep -oE '\+[0-9]+ms')" | tee -a shots/wlat.txt
   grep -q "CLOUD SYNC ok .*agent=2 banner=.*n=2" shots/mcp.txt || { echo "agent changes not pulled"; fail=1; }
-  grep -q "WLAT row" shots/mcp.txt || { echo "agent todo not in widget"; fail=1; }
+  grep -qE "$WMCP" shots/mcp.txt || { echo "agent todo not in widget"; fail=1; }
   adb logcat -c
   adb shell am start -n $P/$A --ez aistate true > /dev/null; sleep 2
   adb logcat -d -s ZhishiTest | grep "AISTATE" | tail -1 | tee -a shots/mcp.txt > shots/mcp-state.txt
